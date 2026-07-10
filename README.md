@@ -21,19 +21,24 @@ ideas that require a deeper mental shift.
 
 ## Structure
 
-Ten documents. Read them in order — later chapters use earlier ones constantly.
+Thirteen documents in two parts. Chapters 1–9 form the course: read them in order, because
+later chapters use earlier ones constantly. Chapters 10–12 are reference material: dip into
+them any time after chapter 8, and return to them while building real projects.
 
-| #   | Chapter                                                          | What you get                                                          |
-| --- | ---------------------------------------------------------------- | --------------------------------------------------------------------- |
-| 1   | [Quick Start](01-quick-start.md)                                 | Toolchain installed, first program running, the daily commands        |
-| 2   | [What Makes Rust Different](02-what-makes-rust-different.md)     | The complete map of differences, each with a pointer to its chapter   |
-| 3   | [Ownership and Borrowing](03-ownership-and-borrowing.md)         | The memory model: moves, references, lifetimes, `String` vs `&str`    |
-| 4   | [Modeling Data with Types](04-modeling-data-with-types.md)       | Structs, enums, `Option`, pattern matching, iterators, newtypes       |
-| 5   | [Error Handling](05-error-handling.md)                           | `Result`, `?`, designing error types, `thiserror` and `anyhow`        |
-| 6   | [Traits and Generics](06-traits-and-generics.md)                 | Contracts, zero-cost generics, `dyn`, and who should own an interface |
-| 7   | [Concurrency and Async](07-concurrency-and-async.md)             | Threads, locks, channels, `Send`/`Sync`, Tokio, the classic mistakes  |
-| 8   | [Projects, Tooling, and Tests](08-projects-tooling-and-tests.md) | Modules, crates, workspaces, layered architecture, the test toolkit   |
-| 9   | [Capstone: A Real Service](09-capstone.md)                       | Everything combined in one small, realistic design                    |
+| #   | Chapter                                                                          | What you get                                                                    |
+| --- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 1   | [Quick Start](01-quick-start.md)                                                 | Toolchain installed, first program running, the daily commands                  |
+| 2   | [What Makes Rust Different](02-what-makes-rust-different.md)                     | The complete map of differences, each with a pointer to its chapter             |
+| 3   | [Ownership and Borrowing](03-ownership-and-borrowing.md)                         | The memory model: moves, references, lifetimes, `String` vs `&str`              |
+| 4   | [Modeling Data with Types](04-modeling-data-with-types.md)                       | Structs, enums, `Option`, pattern matching, iterators, newtypes                 |
+| 5   | [Error Handling](05-error-handling.md)                                           | `Result`, `?`, designing error types, `thiserror` and `anyhow`                  |
+| 6   | [Traits and Generics](06-traits-and-generics.md)                                 | Contracts, zero-cost generics, `dyn`, and who should own an interface           |
+| 7   | [Concurrency and Async](07-concurrency-and-async.md)                             | Threads, locks, channels, `Send`/`Sync`, Tokio, the classic mistakes            |
+| 8   | [Projects, Tooling, and Tests](08-projects-tooling-and-tests.md)                 | Modules, crates, workspaces, layered architecture, the test toolkit             |
+| 9   | [Capstone: A Real Service](09-capstone.md)                                       | Everything combined in one small, realistic design                              |
+| 10  | [The Ecosystem: Recommended Crates](10-ecosystem-and-crates.md)                  | Which library to use for what, and how to judge an unfamiliar crate             |
+| 11  | [Project Layout and Architecture](11-project-layout-and-architecture.md)         | Copyable file structures (CLI, library, service) and recurring design patterns  |
+| 12  | [Best Practices](12-best-practices.md)                                           | API design, performance, security, dependency hygiene, CI — the checklist       |
 
 ## Conventions used in the text
 
