@@ -53,6 +53,8 @@ if let Some(user) = find_user("ada") {
 Null-pointer exceptions are not a runtime risk; they are a compile error. Details in
 **chapter 4**.
 
+> By forcing developers to acknowledge the possibility of absence through the Option<T> enum, Rust shifts the burden of null-checking from runtime (where it crashes your app) to compile time (where it prevents the app from even building).
+
 > **If you come from Java/C#/JS:** every place you'd write a null check, Rust has already
 > forced the question at the type level. TypeScript's strict-null-checks and Kotlin's `?`
 > types are partial versions of the same idea.
