@@ -1,4 +1,4 @@
-# Chapter 8 — Projects, Tooling, and Tests
+# Chapter 8: Projects, Tooling, and Tests
 
 The guide now moves beyond single-file examples. This chapter covers modules, crates,
 workspaces, project tooling, and tests. Its central idea is that **Rust can encode
