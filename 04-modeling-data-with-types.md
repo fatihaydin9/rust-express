@@ -1,4 +1,4 @@
-# Chapter 4 — Modeling Data with Types
+# Chapter 4: Modeling Data with Types
 
 Memory safety is only the starting point. Rust's type system also lets a design rule out
 entire categories of logical errors before execution. This chapter covers structs, enums,
