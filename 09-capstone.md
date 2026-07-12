@@ -1,4 +1,4 @@
-# Chapter 9 — Capstone: A Real Service
+# Chapter 9: Capstone: A Real Service
 
 This chapter assembles the guide into one realistic design: a **versioned document store
 with an audit trail**. Each earlier concept now carries part of the architecture. The final
