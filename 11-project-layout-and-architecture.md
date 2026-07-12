@@ -1,4 +1,4 @@
-# Chapter 11 — Project Layout and Architecture
+# Chapter 11: Project Layout and Architecture
 
 Chapter 8 introduced the principles: crates act as architectural boundaries, dependencies point inward, and the application has one composition root. This chapter turns those principles into concrete file layouts for three common project shapes. It also explains the module conventions and architectural patterns that repeatedly appear in production Rust services.
 
