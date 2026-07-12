@@ -1,4 +1,4 @@
-# Chapter 12 — Best Practices
+# Chapter 12: Best Practices
 
 This chapter consolidates the conventions that help a Rust codebase remain healthy over time. Most sections compress ideas from earlier chapters into rules that can be reviewed or automated; the rest comes from recurring production experience.
 
