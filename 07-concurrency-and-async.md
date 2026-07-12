@@ -1,4 +1,4 @@
-# Chapter 7 — Concurrency and Async
+# Chapter 7: Concurrency and Async
 
 Chapter 2 made a strong claim: safe Rust rejects data races at compile time. This chapter
 explains the mechanism and introduces the practical tools built around it, including
