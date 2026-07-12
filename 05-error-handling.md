@@ -1,31 +1,31 @@
 # Chapter 5: Error Handling
 
 Rust does not use exceptions for ordinary recoverable failures. Failure is a **return
-value**, which makes error handling part of the data model rather than an invisible runtime
-mechanism. This chapter begins with `Result` and `?`, then moves to error types that remain
-useful during production incidents and the common roles of `thiserror` and `anyhow`.
+value**, which makes error handling part of the data model rather than an invisible
+runtime mechanism. This chapter begins with `Result` and `?`, then moves to error types
+that remain useful during production incidents and the common roles of `thiserror` and
+`anyhow`.
 
 ## 5.1 Two kinds of failure, two tools
 
-**Unrecoverable failures** represent bugs or violated internal invariants for which
-continuing would be unsafe. These use `panic!`, which stops the current thread and normally
-unwinds its stack. Out-of-bounds indexing is one example. Think of panic as an assertion
-failure, not a substitute for ordinary error handling.
+Rust distinguishes between broken assumptions and failures that callers may reasonably
+handle. A **panic** usually represents an internal invariant violation or programming
+error. Depending on the build configuration, it may unwind the current thread or abort
+the process. Out-of-bounds indexing is one example.
 
-**Recoverable** failures — file missing, network timeout, malformed input, version conflict
-— are _expected events_, and expected events are **data**: returned, typed, handled.
+Conditions such as a missing file, a network timeout, malformed input, or a version
+conflict are expected parts of many programs. They are normally represented as typed
+return values. A useful question is: _could the caller reasonably respond to this
+condition?_ If so, return it as an error value rather than panicking.
 
-The dividing question: _could a caller reasonably want to react to this?_ If yes, it's a
-value. Almost everything interesting is a value.
-
-> **If you come from Go:** `Result` is your `(value, err)` pair, formalized — with the
-> improvements that ignoring it is a compiler warning, and propagation is one character
-> instead of three lines. **If you come from Java/Python/JS:** signatures now _show_
-> fallibility, and nothing jumps invisibly over your stack frames.
+> **If you come from Go:** `Result` serves a role similar to a `(value, err)` return, while
+> the type system and the `?` operator provide standard handling and propagation. **If you
+> come from Java, Python, or JavaScript:** recoverable failure is visible in the return type
+> rather than being communicated through exceptions.
 
 ## 5.2 `Result<T, E>`: failure you can hold
 
-An ordinary enum from the standard library — no magic:
+`Result` is an ordinary generic enum from the standard library:
 
 ```rust
 enum Result<T, E> {
@@ -45,14 +45,15 @@ match read_config("app.toml") {
 }
 ```
 
-Everything chapter 4 taught about enums applies: exhaustive matching, combinators (`.map`,
-`.unwrap_or_else`, `.ok()` to convert into an `Option`, and `opt.ok_or(err)` the other way).
-`.unwrap()` / `.expect("why this can't fail")` exist here too, with the same policy: fine in
-tests and examples, a smell in libraries.
+Everything chapter 4 taught about enums applies: exhaustive matching, combinators
+(`.map`, `.unwrap_or_else`, `.ok()` to convert into an `Option`, and `opt.ok_or(err)`
+the other way). `.unwrap()` / `.expect("why this can't fail")` exist here too, with the
+same policy: fine in tests and examples, a smell in libraries.
 
 ## 5.3 `?`: propagation without the pyramid
 
-The operator that makes `Result` livable. These two functions are identical:
+The `?` operator provides a concise form of early error propagation. The following two
+functions have the same behavior:
 
 ```rust
 // Expanded form.
@@ -73,25 +74,26 @@ fn load(path: &str) -> Result<Config, ConfigError> {
 ```
 
 The `?` operator performs three steps. On `Ok`, it extracts the value and continues. On
-`Err`, it returns early. During that return, it can convert the error into the function's
-error type when a suitable `From` implementation exists.
+`Err`, it returns early. During that return, it can convert the error into the
+function's error type when a suitable `From` implementation exists.
 
 The happy path therefore remains linear, while every possible propagation point stays
 visible in the source. Errors can travel upward through several layers, but each hop is
 explicit and typed.
 
-Note: `?` works inside any function that returns `Result` (or `Option`) — including `main`,
-which may be declared `fn main() -> Result<(), anyhow::Error>` so scripts get `?` for free.
+Note: `?` works inside any function that returns `Result` (or `Option`) — including
+`main`, which may be declared `fn main() -> Result<(), anyhow::Error>` so scripts get
+`?` for free.
 
 ## 5.4 Designing the error type, three drafts
 
-Errors are values, so _you design them_, and the quality shows in production logs. Watch one
-evolve.
+Because errors are values, their structure is part of the program's design. The
+following example develops an error type in three stages.
 
-**Draft 1 — the lazy baseline:** `Result<Doc, String>`. Compiles; useless. Callers can't
-branch on prose, only print it. You've rebuilt untyped exceptions.
+**Draft 1 — a string error:** `Result<Doc, String>`. This is easy to create, but callers
+cannot reliably branch on prose and can usually do little more than display or log it.
 
-**Draft 2 — name the cases.** It's an enum, obviously:
+**Draft 2 — name the cases.** An enum gives each failure a stable identity:
 
 ```rust
 enum DocumentError {
@@ -103,7 +105,8 @@ enum DocumentError {
 
 Callers can match now. But put yourself at the _receiving_ end of `VersionConflict`
 (optimistic locking: someone saved before you). What do you tell the user? Which version
-exists now? Who changed it? The error knows nothing; you must re-query — if you still can.
+exists now? Who changed it? The error does not contain that context, so the handler may
+need another query and the information may no longer be available.
 
 **Draft 3 — the principle: each variant carries what its handler needs to act.** The
 information was in hand at the failure site. Don't discard it there:
@@ -129,9 +132,9 @@ newtype IDs also remain intact inside the error.
 This habit—placing actionable context in each variant—is one of the clearest differences
 between weak and strong error designs.
 
-Granularity advice from practice: one error enum **per module or service**, at that layer's
-level of abstraction — not one giant enum for the whole application (whose matches rot into
-`_ => unreachable!()`), and not one enum per function (ceremony).
+A practical default is one error enum per module or service, expressed at that layer's
+level of abstraction. One application-wide enum often becomes too broad, while a
+separate enum for every function usually adds unnecessary ceremony.
 
 ## 5.5 `thiserror`: the boilerplate, derived
 
@@ -161,22 +164,24 @@ pub enum DocumentError {
 }
 ```
 
-Each `#[error("…")]` is the human-readable message with the variant's fields interpolated.
-That's the whole crate: your enum, your design — minus the ceremony.
+Each `#[error("…")]` is the human-readable message with the variant's fields
+interpolated. The crate derives the standard error traits while leaving the variants and
+their meaning under your control.
 
-## 5.6 Wrapping causes: keep the chain, never flatten it
+## 5.6 Wrapping causes: preserve the error chain
 
 The last variant answers the layered-system question: _what do I do with errors from the
-layer below me?_ There is a tempting wrong answer, common in the wild:
+layer below me?_ A common but lossy approach is to convert the lower-level error into a
+string:
 
 ```rust
 #[error("storage failure: {0}")]
 Store(String), // The original error type and source chain are lost.
 ```
 
-Converting the underlying error to a `String` amputates it: its **type** is gone (no more
-matching "was that a unique-constraint violation?"), and its **source chain** is gone — the
-linked list of causes that error reporters walk to print:
+Converting the underlying error to a `String` discards useful structure. The original
+**type** is no longer available for matching, and the **source chain** used by error
+reporters is also lost:
 
 ```text
 storage failure
@@ -184,20 +189,20 @@ storage failure
 └─ caused by: os error 104
 ```
 
-The right answer costs nothing:
+Store the original error instead:
 
 ```rust
 #[error("storage failure")]
 Store(#[from] sqlx::Error),
 ```
 
-`#[from]` stores the original error without flattening it and preserves the source chain. It
-also generates the `From` conversion that allows `?` to cross the layer boundary
-automatically.
+`#[from]` stores the original error without flattening it and preserves the source
+chain. It also generates the `From` conversion that allows `?` to cross the layer
+boundary automatically.
 
-Treat the cause chain as evidence: **wrap it rather than paraphrasing it.** When automatic
-conversion is not appropriate, mark the underlying field with `#[source]` to preserve the
-same relationship.
+Treat the cause chain as diagnostic evidence: preserve the original error rather than
+paraphrasing it into a string. When automatic conversion is not appropriate, mark the
+underlying field with `#[source]` to preserve the same relationship.
 
 At the outermost boundary, map errors _once_, exhaustively — for example, domain error →
 HTTP status:
@@ -211,15 +216,16 @@ match e {
 }
 ```
 
-Add a variant next month, and this match refuses to compile until you've chosen its status
-code — chapter 4's exhaustiveness doing maintenance for you.
+When a new variant is added, this exhaustive match identifies the boundary mapping that
+still needs a status code.
 
 ## 5.7 `anyhow`: for the edges
 
-One ecosystem convention separates typed internal errors from application-level reporting.
-When another piece of code consumes an error, it usually needs a concrete enum so it can
-branch on variants. When the final consumer is a human reading CLI output or a top-level
-log, `anyhow` offers a flexible error type with convenient context and little ceremony:
+One ecosystem convention separates typed internal errors from application-level
+reporting. When another piece of code consumes an error, it usually needs a concrete
+enum so it can branch on variants. When the final consumer is a human reading CLI output
+or a top-level log, `anyhow` offers a flexible error type with convenient context and
+little ceremony:
 
 ```rust
 use anyhow::Context;
@@ -232,19 +238,19 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-Rule of thumb, near-universal in the ecosystem: **`thiserror` for libraries and domain
-logic; `anyhow` allowed at application edges.**
+A common ecosystem convention is to use **`thiserror` for structured library and domain
+errors, and `anyhow` at application boundaries where a human will consume the report.**
 
-> **Common mistake:** the directions reversed — `anyhow` leaking out of a library's public
-> API (callers can no longer branch), or thirty-variant `thiserror` ceremony inside a
-> ten-line script.
+> **Common mistake:** exposing `anyhow::Error` from a library API whose callers need to match
+> specific cases, or defining a large custom error hierarchy for a small application script
+> that only needs contextual reporting.
 
 ## Summary
 
-Failure is data. It appears in signatures through `Result`, propagates explicitly through
-`?`, and is modeled with variants that carry the information handlers need. Preserve
-underlying causes with `#[from]` rather than reducing them to strings, and map domain errors
-once at the outer boundary.
+Failure is data. It appears in signatures through `Result`, propagates explicitly
+through `?`, and is modeled with variants that carry the information handlers need.
+Preserve underlying causes with `#[from]` rather than reducing them to strings, and map
+domain errors once at the outer boundary.
 
 Use `thiserror` where code needs structured errors and allow `anyhow` at human-facing
 application edges. The next chapter introduces traits, the mechanism that carries these

@@ -1,14 +1,14 @@
 # Chapter 8: Projects, Tooling, and Tests
 
 The guide now moves beyond single-file examples. This chapter covers modules, crates,
-workspaces, project tooling, and tests. Its central idea is that **Rust can encode
-architectural boundaries as compiler-enforced dependency rules rather than leaving them only
-in diagrams.**
+workspaces, project tooling, and tests. Its central idea is that crate dependencies can
+turn some architectural boundaries into rules checked by the compiler rather than
+conventions shown only in diagrams.
 
-## 8.1 Modules: rooms inside one building
+## 8.1 Modules: organization within a crate
 
-Inside one compilation unit, code organizes into **modules** — namespaces with visibility
-rules:
+Inside one compilation unit, code organizes into **modules** — namespaces with
+visibility rules:
 
 ```rust
 mod billing {
@@ -31,25 +31,26 @@ mod billing {
 use billing::Invoice;
 ```
 
-Module names usually follow the file layout. A `mod billing;` declaration in `main.rs` or
-`lib.rs` loads `src/billing.rs`, or `src/billing/mod.rs` when the module is represented by a
-directory.
+Module names usually follow the file layout. A `mod billing;` declaration in `main.rs`
+or `lib.rs` loads `src/billing.rs`, or `src/billing/mod.rs` when the module is
+represented by a directory.
 
-The `pub(crate)` visibility level is especially useful: the entire crate may use the item,
-but external crates may not. Prefer it for shared internals, and reserve bare `pub` for an
-intentionally designed public API.
+The `pub(crate)` visibility level is especially useful: the entire crate may use the
+item, but external crates may not. Prefer it for shared internals, and reserve bare
+`pub` for an intentionally designed public API.
 
-## 8.2 Crates: the wall the compiler patrols
+## 8.2 Crates: compilation and dependency boundaries
 
 A **crate** is Rust's unit of compilation and distribution. Binary crates contain a
 `src/main.rs` entry point, while library crates expose code through `src/lib.rs`; one
 package may contain both.
 
-The important architectural property is simple: **a crate cannot use a dependency that is
-absent from its `Cargo.toml`.** When the domain crate does not declare `sqlx`, importing
-SQLx there becomes a compile error rather than a convention that reviewers must remember.
+The important architectural property is simple: **a crate cannot use a dependency that
+is absent from its `Cargo.toml`.** When the domain crate does not declare `sqlx`,
+importing SQLx there becomes a compile error rather than a convention that reviewers
+must remember.
 
-## 8.3 Workspaces: many crates, one truth
+## 8.3 Workspaces: several crates managed together
 
 A **workspace** develops several crates together — one root manifest, one shared
 `Cargo.lock`, one build cache:
@@ -58,25 +59,25 @@ A **workspace** develops several crates together — one root manifest, one shar
 [workspace]
 members = ["crates/domain", "crates/store-postgres", "crates/server"]
 
-[workspace.dependencies]           # single source of version truth
+[workspace.dependencies]           # shared dependency versions
 tokio     = { version = "1", features = ["rt-multi-thread", "macros"] }
 sqlx      = { version = "0.8", features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2"
 ```
 
-Members reference them with `tokio = { workspace = true }`. The payoff of
-`[workspace.dependencies]` is the end of _version drift_ — no three crates on three subtly
-incompatible `tokio`s — and one place to audit or upgrade anything.
+Members reference them with `tokio = { workspace = true }`. `[workspace.dependencies]`
+reduces version drift by giving workspace members one place to select, audit, and
+upgrade shared dependencies.
 
-## 8.4 The layered layout: architecture as build success
+## 8.4 A layered layout with enforced dependencies
 
 Combine §8.2 with chapter 6's consumer-owned traits and a layout falls out:
 
 ```
 myapp/
 └── crates/
-    ├── domain/            # entities, errors, services, THE TRAITS
-    │                      #   deps: thiserror, uuid — NO sqlx, NO axum
+    ├── domain/            # entities, errors, services, and consumer-owned traits
+    │                      #   deps: thiserror, uuid; no sqlx or axum
     ├── store-postgres/    # implements domain's repository traits
     │                      #   deps: domain, sqlx
     └── server/            # HTTP, config, startup — wires everything
@@ -84,20 +85,22 @@ myapp/
 ```
 
 The layout encodes one rule: dependency arrows point inward toward the domain. In
-ports-and-adapters terminology, chapter 6's traits are the ports and the storage crates are
-adapters.
+ports-and-adapters terminology, chapter 6's traits are the ports and the storage crates
+are adapters.
 
-Rust adds enforcement. Because the domain manifest omits `sqlx`, SQL-specific code cannot
-enter the domain while the project still builds. Cargo also rejects cyclic crate
+Rust adds enforcement. Because the domain manifest omits `sqlx`, SQL-specific code
+cannot enter the domain while the project still builds. Cargo also rejects cyclic crate
 dependencies, preventing one common form of architectural erosion at the package level.
 
-Sizing advice: split by _rate and reason of change_, not dogma. A `domain` several times
-larger than any adapter is healthy; ten micro-crates for a small app is ceremony.
+Choose crate boundaries according to why code changes and which dependencies it needs. A
+small application may not benefit from many tiny crates, while a larger domain can
+reasonably be much bigger than each adapter.
 
 ## 8.5 The composition root: wiring without a framework
 
-Exactly one place knows every concrete type — `main` (or a `bootstrap` module beside it),
-where chapter 6's generic services meet real implementations:
+In this design, concrete implementations are assembled in one place: `main`, or a nearby
+`bootstrap` module. This is where the generic services from chapter 6 meet the
+production adapters:
 
 ```rust
 #[tokio::main]
@@ -118,26 +121,29 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-No dependency-injection container, no reflection: **injection is passing an argument**, and
-the whole graph is type-checked. If the adapter drifts out of sync with the trait, the build
-breaks _here_, naming the missing method. Swapping Postgres for an in-memory store is a
-different argument at this one call site — which is exactly how the tests below work.
+No runtime dependency-injection container is required here. The implementation is passed
+as an argument, and the resulting graph is checked by the type system. If the adapter
+drifts out of sync with the trait, the build breaks _here_, naming the missing method.
+Swapping Postgres for an in-memory store is a different argument at this one call site —
+which is exactly how the tests below work.
 
-## 8.6 The tooling belt
+## 8.6 Project tools
 
-Four tools should be part of a professional Rust project from the beginning:
+The following tools are useful defaults for most Rust projects:
 
 - **`cargo fmt`** applies Rust's canonical format. Run `cargo fmt --check` in CI.
 - **`cargo clippy`** detects non-idiomatic code and many real bug patterns. A strict CI
   command is `cargo clippy -- -D warnings`.
 - **`cargo doc --open`** renders `///` comments into browsable API documentation. Code
   examples in documentation can be compiled and executed as doc-tests by `cargo test`.
-- **`cargo audit`** checks the dependency graph against the Rust security advisory database.
+- **`cargo audit`** checks the dependency graph against the Rust security advisory
+  database.
 
-## 8.7 Tests: built in, three kinds
+## 8.7 Three forms of tests
 
-`cargo test` runs three kinds of tests with zero framework decisions. **Unit tests** live
-_inside the file they test_, in a module compiled only for testing:
+Rust and Cargo support three common forms of tests without requiring an external test
+runner. **Unit tests** live _inside the file they test_, in a module compiled only for
+testing:
 
 ```rust
 // src/services/order_service.rs, at the bottom of the same file.
@@ -157,16 +163,17 @@ mod tests {
 }
 ```
 
-Co-location makes tests the first documentation a reader meets; `#[cfg(test)]` makes them
-cost zero in release builds. **Integration tests** live in a top-level `tests/` directory —
-each file a separate binary seeing only your _public_ API. **Doc-tests** are §8.6's compiled
-examples. The assertion macros are `assert!`, `assert_eq!`, and — for enums with data —
-`matches!`, which you're about to need.
+Co-location keeps tests near the implementation, while `#[cfg(test)]` excludes the test
+module from normal non-test builds. **Integration tests** live in a top-level `tests/`
+directory — each file a separate binary seeing only your _public_ API. **Doc-tests** are
+§8.6's compiled examples. The assertion macros are `assert!`, `assert_eq!`, and — for
+enums with data — `matches!`, which you're about to need.
 
-## 8.8 The payoff: testing the domain with a fifteen-line fake
+## 8.8 Testing the domain with a small fake
 
-Here chapters 5, 6, and 7 pay out together. `OrderService` depends on a trait _we_ defined,
-so a test double is a small struct — no mocking framework, no database, no Docker:
+The ideas from chapters 5, 6, and 7 now combine in a testable design. `OrderService`
+depends on a trait _we_ defined, so a test double is a small struct — no mocking
+framework, no database, no Docker:
 
 ```rust
 #[cfg(test)]
@@ -239,27 +246,28 @@ mod tests {
 }
 ```
 
-This test exercises pure business logic without infrastructure. It is fast, deterministic,
-and safe to run in parallel. `type Tx = ()` removes transaction mechanics from the fake,
-while `fail_commit` makes a failure path easy to reproduce.
+This test exercises business logic without starting external infrastructure. It is
+small, deterministic, and suitable for parallel test execution. `type Tx = ()` removes
+transaction mechanics from the fake, while `fail_commit` makes a failure path easy to
+reproduce.
 
-The `matches!` assertion checks both the error variant and its important fields. The test
-therefore verifies the failure contract that an API or UI will depend on, not merely that
-“some error” occurred.
+The `matches!` assertion checks both the error variant and its important fields. The
+test therefore verifies the failure contract that an API or UI will depend on, not
+merely that “some error” occurred.
 
-Two closing calibrations. A modest band of **integration tests against real Postgres** (in a
-container) still belongs in the store crate — the fake proves your logic, not your SQL. And
-if testing ever feels hard in a Rust codebase, the fix is almost never a bigger mocking
-framework; it's a **missing trait boundary** — go back to chapter 6.5.
+Two closing calibrations. A modest band of **integration tests against real Postgres**
+(in a container) still belongs in the store crate — the fake proves your logic, not your
+SQL. When business logic is difficult to test without infrastructure, review whether a
+focused trait boundary is missing before introducing a larger mocking framework.
 
 ## Summary
 
 Modules organize code within a crate, while crates form dependency boundaries that the
-compiler can enforce. Workspaces provide one lockfile, build cache, and shared dependency
-policy. A layered crate layout can turn “the domain does not know the database” into a build
-rule rather than a guideline.
+compiler can enforce. Workspaces provide one lockfile, build cache, and shared
+dependency policy. A layered crate layout can turn “the domain does not know the
+database” into a build rule rather than a guideline.
 
 Wire concrete implementations once at the composition root, and use formatting, linting,
-documentation tests, and dependency audits as CI gates. Consumer-owned traits then make the
-domain fast to test with small fakes and precise `matches!` assertions. The final chapter
-assembles these ideas into one service design.
+documentation tests, and dependency audits as CI gates. Consumer-owned traits then make
+the domain fast to test with small fakes and precise `matches!` assertions. The final
+chapter assembles these ideas into one service design.

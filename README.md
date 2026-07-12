@@ -1,64 +1,77 @@
-# Rust for Programmers
+# Rust Express
 
-This is a practical introduction to Rust for programmers coming from Python, JavaScript, Go,
-Java, C#, C++, or another language. It follows the kind of path an experienced Rust
-developer might use when onboarding a teammate: start quickly, make the language's
-differences explicit, and spend time on the concepts that determine real productivity. Those
-concepts include ownership, error handling, traits, concurrency, and project structure.
+Rust Express is a practical introduction to Rust for programmers coming from Python,
+JavaScript, Go, Java, C#, C++, or another language. It follows the path an experienced
+Rust developer might use when helping a teammate get started: build something quickly,
+explain where Rust differs from familiar languages, and spend more time on the ideas
+that shape everyday development.
+
+Those ideas include ownership, error handling, traits, concurrency, testing, and project
+structure.
 
 ## Who this is for
 
-You can already program and understand concepts such as functions, types, threads, and
-package managers. You do **not** need prior experience with Rust, systems programming, or
-manual memory management. Whenever Rust behaves differently from languages you may know, the
-text explains that difference directly and gives the reason behind it.
+You should already be comfortable with general programming concepts such as functions,
+types, threads, and package managers. You do **not** need previous experience with Rust,
+systems programming, or manual memory management.
+
+When Rust behaves differently from languages you may know, the guide explains the
+difference and the reason behind it. The comparisons are learning aids rather than exact
+equivalences.
 
 ## What this is not
 
-This is not a complete language reference. It uses ordinary syntax—such as loop forms,
-string methods, and pattern syntax—without cataloging every variation. The focus stays on
-ideas that require a deeper mental shift.
+This is not a complete language reference. It uses common syntax, including loops,
+string methods, and patterns, without cataloging every available form. The focus remains
+on the concepts that usually require a change in how programmers think about code.
 
 ## Structure
 
-Thirteen documents in two parts. Chapters 1–9 form the course: read them in order, because
-later chapters use earlier ones constantly. Chapters 10–12 are reference material: dip into
-them any time after chapter 8, and return to them while building real projects.
+The guide contains twelve chapters. Chapters 1–9 form the main course and are best read
+in order because later examples build on earlier concepts. Chapters 10–12 work more like
+reference material: you can read them after chapter 8 and revisit them while working on
+real projects.
 
-| #   | Chapter                                                                          | What you get                                                                    |
-| --- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| 1   | [Quick Start](01-quick-start.md)                                                 | Toolchain installed, first program running, the daily commands                  |
-| 2   | [What Makes Rust Different](02-what-makes-rust-different.md)                     | The complete map of differences, each with a pointer to its chapter             |
-| 3   | [Ownership and Borrowing](03-ownership-and-borrowing.md)                         | The memory model: moves, references, lifetimes, `String` vs `&str`              |
-| 4   | [Modeling Data with Types](04-modeling-data-with-types.md)                       | Structs, enums, `Option`, pattern matching, iterators, newtypes                 |
-| 5   | [Error Handling](05-error-handling.md)                                           | `Result`, `?`, designing error types, `thiserror` and `anyhow`                  |
-| 6   | [Traits and Generics](06-traits-and-generics.md)                                 | Contracts, zero-cost generics, `dyn`, and who should own an interface           |
-| 7   | [Concurrency and Async](07-concurrency-and-async.md)                             | Threads, locks, channels, `Send`/`Sync`, Tokio, the classic mistakes            |
-| 8   | [Projects, Tooling, and Tests](08-projects-tooling-and-tests.md)                 | Modules, crates, workspaces, layered architecture, the test toolkit             |
-| 9   | [Capstone: A Real Service](09-capstone.md)                                       | Everything combined in one small, realistic design                              |
-| 10  | [The Ecosystem: Recommended Crates](10-ecosystem-and-crates.md)                  | Which library to use for what, and how to judge an unfamiliar crate             |
-| 11  | [Project Layout and Architecture](11-project-layout-and-architecture.md)         | Copyable file structures (CLI, library, service) and recurring design patterns  |
-| 12  | [Best Practices](12-best-practices.md)                                           | API design, performance, security, dependency hygiene, CI — the checklist       |
+| #   | Chapter                                                                          | What you get                                                                   |
+| --- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 1   | [Quick Start](01-quick-start.md)                                                 | The toolchain, a first program, and the Cargo commands used every day          |
+| 2   | [What Makes Rust Different](02-what-makes-rust-different.md)                     | An overview of the main mental shifts, with links to later chapters            |
+| 3   | [Ownership and Borrowing](03-ownership-and-borrowing.md)                         | Moves, references, lifetimes, and the difference between `String` and `&str`  |
+| 4   | [Modeling Data with Types](04-modeling-data-with-types.md)                       | Structs, enums, `Option`, pattern matching, iterators, and newtypes            |
+| 5   | [Error Handling](05-error-handling.md)                                           | `Result`, `?`, error design, `thiserror`, and `anyhow`                         |
+| 6   | [Traits and Generics](06-traits-and-generics.md)                                 | Traits, static and dynamic dispatch, conversions, and interface ownership      |
+| 7   | [Concurrency and Async](07-concurrency-and-async.md)                             | Threads, locks, channels, `Send`/`Sync`, Tokio, and common async mistakes      |
+| 8   | [Projects, Tooling, and Tests](08-projects-tooling-and-tests.md)                 | Modules, crates, workspaces, layered architecture, and testing tools           |
+| 9   | [Capstone: A Real Service](09-capstone.md)                                       | The earlier ideas combined in a small service design                           |
+| 10  | [The Ecosystem: Recommended Crates](10-ecosystem-and-crates.md)                  | Common libraries and a practical way to evaluate unfamiliar crates            |
+| 11  | [Project Layout and Architecture](11-project-layout-and-architecture.md)         | Example layouts for a CLI, a library, and a service                            |
+| 12  | [Best Practices](12-best-practices.md)                                           | Guidance for APIs, performance, security, dependencies, concurrency, and CI    |
 
 ## Conventions used in the text
 
-Code blocks are intentionally small, but they do not hide important requirements. When an
-example needs a `use` declaration, it is shown or explicitly noted. Compiler output also
-appears frequently because Rust's diagnostics are part of the learning process; read them to
-the end rather than stopping at the first line.
+Code blocks are intentionally small, but they do not omit requirements that affect the
+example. When a snippet needs a `use` declaration, the guide shows it or states that it
+is required.
+
+Compiler output appears often because learning to read Rust diagnostics is part of
+learning the language. Read the complete message rather than stopping at its first line;
+the most useful suggestion is often near the end. Exact wording may vary slightly
+between compiler versions.
 
 Three recurring markers appear throughout the guide:
 
-> **If you come from …** — a direct comparison to another language's behavior.
+> **If you come from …** — a comparison that connects Rust to a familiar language.
 
-> **Common mistake:** — an error most newcomers make; reading these saves you hours.
+> **Common mistake:** — a pattern that often causes confusion or avoidable problems.
 
-> **Try it:** — a small experiment: change the code, recompile, watch what happens.
+> **Try it:** — a small experiment that helps make the behavior concrete.
 
-## One honest sentence about the learning curve
+## A note about the learning curve
 
-During the first one or two weeks, many Rust programmers feel as though they are arguing
-with the compiler about ownership. That experience is normal and temporary. It ends not
-because the compiler becomes less strict, but because the ownership model becomes intuitive
-and you stop reaching for designs it rejects. This guide aims to shorten that transition as
-much as written material can.
+Ownership and borrowing can feel restrictive at first, especially when familiar designs
+do not translate directly. This becomes easier as the ownership model starts to guide
+the way you structure data and APIs.
+
+The compiler does not become less strict, but its messages become easier to interpret,
+and you begin to recognize which designs fit the model naturally. This guide is intended
+to make that transition more understandable and less frustrating.
