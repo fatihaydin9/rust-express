@@ -1,4 +1,4 @@
-# Chapter 10 — The Ecosystem: Recommended Crates
+# Chapter 10: The Ecosystem: Recommended Crates
 
 Rust's standard library is intentionally small. It does not include an HTTP client, an async runtime, serialization formats, or random-number generation. The broader ecosystem fills those gaps, and in many categories the community has converged on a de facto standard.
 
