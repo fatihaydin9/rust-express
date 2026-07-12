@@ -75,3 +75,6 @@ the way you structure data and APIs.
 The compiler does not become less strict, but its messages become easier to interpret,
 and you begin to recognize which designs fit the model naturally. This guide is intended
 to make that transition more understandable and less frustrating.
+
+---
+
