@@ -1,4 +1,4 @@
-# Chapter 1 — Quick Start
+# Chapter 1: Quick Start
 
 By the end of this chapter, you will have Rust installed, a program running, a dependency
 working, and the everyday Cargo commands at hand. The initial setup should take about
