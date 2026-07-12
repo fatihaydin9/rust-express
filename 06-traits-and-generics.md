@@ -1,4 +1,4 @@
-# Chapter 6 — Traits and Generics
+# Chapter 6: Traits and Generics
 
 Rust has no class inheritance. Its main abstraction mechanism is the **trait**. This chapter
 begins with trait basics and ends with an architectural question that shapes entire
