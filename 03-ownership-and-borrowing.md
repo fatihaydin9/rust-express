@@ -1,4 +1,4 @@
-# Chapter 3 — Ownership and Borrowing
+# Chapter 3: Ownership and Borrowing
 
 This chapter is where Rust's model usually begins to click. Work through it slowly, type the
 examples, and read each compiler message to the end. The model is compact—three ownership
@@ -80,7 +80,7 @@ deep copy. This is a deliberate design stance: **cheap operations are implicit, 
 ones are visible.** In code review, every `.clone()` is an honest, greppable confession that
 a copy happens.
 
-## 3.4 `Copy` types — the exception
+## 3.4 `Copy` types
 
 ```rust
 let x = 5;
@@ -265,7 +265,7 @@ not noise: someone wanted a view and got an owner, or vice versa. The same owner
 pairing exists for collections — `Vec<T>` owns, `&[T]` (a _slice_) is the borrowed view —
 with identical rules.
 
-## 3.10 When you fight the borrow checker — the playbook
+## 3.10 When you fight the borrow checker, the playbook
 
 You will; everyone does. Work this list in order.
 
