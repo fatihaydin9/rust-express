@@ -1,4 +1,4 @@
-# Chapter 5 — Error Handling
+# Chapter 5: Error Handling
 
 Rust does not use exceptions for ordinary recoverable failures. Failure is a **return
 value**, which makes error handling part of the data model rather than an invisible runtime
@@ -83,7 +83,7 @@ explicit and typed.
 Note: `?` works inside any function that returns `Result` (or `Option`) — including `main`,
 which may be declared `fn main() -> Result<(), anyhow::Error>` so scripts get `?` for free.
 
-## 5.4 Designing the error type — three drafts
+## 5.4 Designing the error type, three drafts
 
 Errors are values, so _you design them_, and the quality shows in production logs. Watch one
 evolve.
