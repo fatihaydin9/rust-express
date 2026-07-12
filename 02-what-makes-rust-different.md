@@ -1,11 +1,11 @@
-# Chapter 2 — What Makes Rust Different
+# Chapter 2: What Makes Rust Different
 
 This chapter is an orientation map. It introduces ten important differences through small
 examples and points to the chapter that explains each one in depth. Read it before trying to
 translate familiar patterns directly into Rust syntax; that habit is the source of many
 early fights with the compiler.
 
-## 2.1 No garbage collector — ownership instead
+## 2.1 No garbage collector, ownership instead
 
 Most mainstream memory-safe languages reclaim memory with a runtime garbage collector. Rust
 instead tracks a single _owner_ for each value and inserts cleanup when that owner's scope
@@ -31,7 +31,7 @@ principle appears throughout the language in error handling, conversions, and cr
 sharing. Rust asks you to declare behavior that many languages allow implicitly, making the
 moving parts easier to see during review.
 
-## 2.3 No `null` — `Option<T>` instead
+## 2.3 No `null` or `nil`, `Option<T>` instead
 
 Rust has no universal null, nil, or undefined reference. A `String` always contains a
 string. When absence is possible, the type says so explicitly through `Option<String>`,
@@ -59,7 +59,7 @@ Null-pointer exceptions are not a runtime risk; they are a compile error. Detail
 > forced the question at the type level. TypeScript's strict-null-checks and Kotlin's `?`
 > types are partial versions of the same idea.
 
-## 2.4 No exceptions — `Result<T, E>` instead
+## 2.4 No exceptions, `Result<T, E>` instead
 
 Failure is represented as a return value rather than an invisible control-flow jump. A
 fallible function returns `Result<T, E>`, which is either `Ok(value)` or `Err(error)`, and
@@ -78,7 +78,7 @@ No invisible jumps from three stack frames down, no forgetting to catch. There _
 for unrecoverable bugs — closer to an assertion failure than an exception. All of **chapter
 5**.
 
-## 2.5 No classes, no inheritance — traits instead
+## 2.5 No classes, no inheritance, traits instead
 
 Rust has structs (data) and `impl` blocks (behavior), but no class hierarchy and no
 `extends`. Shared behavior is expressed with **traits** — interfaces that any type can
@@ -128,7 +128,7 @@ let access = match role {
 `match` additionally checks **exhaustiveness**: forget a case and the program doesn't
 compile. This turns out to be a refactoring superpower (chapter 4).
 
-## 2.8 Two string types — on purpose
+## 2.8 Two string types, on purpose
 
 A common first-week stumbling block is the distinction between `String` and `&str`. `String`
 owns growable, heap-allocated text, whereas `&str` is a borrowed view consisting of a
@@ -176,7 +176,7 @@ analogies, for precision.
 | Memory               | GC                          | GC                          | GC                  | ownership, compile-time             | 3       |
 | Generic function     | untyped / TS generics       | generics                    | generics (erased)   | generics (monomorphized, zero-cost) | 6       |
 
-## Summary — and how to use this map
+## Summary and how to use this map
 
 When a later example feels unexpectedly difficult, return to this map and identify the
 underlying difference. Most early problems come from ownership or the distinction between
