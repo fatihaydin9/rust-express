@@ -139,7 +139,7 @@ To lend _with permission to modify_, both sides say so explicitly:
 
 ```rust
 fn add_signature(s: &mut String) {
-    s.push_str(" — Ada");
+    s.push_str(" - Ada");
 }
 
 let mut letter = String::from("Dear reader,");
@@ -242,7 +242,7 @@ annotations because of lifetime elision. Finally, adding more `'a` labels rarely
 design problem: ask whether the returned value should be a reference at all or should
 own its data.
 
-## 3.9 `String` vs `&str` — ownership applied to text
+## 3.9 `String` vs `&str` : ownership applied to text
 
 The distinction between `String` and `&str` is ownership applied to text. `String` is
 the
@@ -273,7 +273,7 @@ let view: &str = owned.as_str(); // `String` to `&str`: borrowed view.
 says `expected &str, found String` (or the reverse), it now reads as an ownership
 statement, as an ownership mismatch: one side expects a borrowed view while the other
 provides an owned value, or vice versa. The same owner/view pairing exists for
-collections — `Vec<T>` owns, `&[T]` (a _slice_) is the borrowed view — with identical
+collections ( `Vec<T>` owns, `&[T]` (a _slice_) is the borrowed view ) with identical
 rules.
 
 ## 3.10 A playbook for borrow-checker conflicts
