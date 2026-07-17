@@ -1,32 +1,40 @@
-# Chapter 11: Project Layout and Architecture
+# Project layout and architecture
 
-Chapter 8 introduced the principles: crates act as architectural boundaries,
-dependencies point inward, and the application has one composition root. This chapter
-turns those principles into concrete file layouts for three common project shapes. It
-also explains the module conventions and architectural patterns that repeatedly appear
-in production Rust services.
+This chapter explains how to organize directories and structure code for three common project shapes in Rust: command-line interface (CLI) applications, libraries, and large workspaces. It also describes standard module organization rules, naming conventions, and recurring architectural patterns used in production-grade Rust systems.
 
-## 11.1 Shape A: a CLI tool or small binary
+By the end of this chapter, you will understand:
+* How to lay out directories for a CLI tool or small binary.
+* How to design a library crate with a curated public API.
+* How to structure a multi-crate workspace for a layered microservice.
+* How to organize modules and visibility rules within a single crate.
+* Standard architectural patterns like typed configuration, builder patterns, graceful shutdown, and actor-based state management.
+* Standard Rust naming conventions for crates, variables, functions, and constructors.
+
+## Layout for command-line tools and small binaries
+
+The following structure is recommended for CLI applications or small executable binaries:
 
 ```text
 mytool/
 ├── Cargo.toml
 ├── README.md
 ├── src/
-│   ├── main.rs           # Thin entry point: parse, call, map the final error
-│   ├── lib.rs            # Testable application logic
-│   ├── cli.rs            # clap argument definitions
+│   ├── main.rs           # The entry point (handles parsing and logs errors)
+│   ├── lib.rs            # Core application logic
+│   ├── cli.rs            # Command-line argument definitions using Clap
 │   └── commands/
 │       ├── mod.rs
-│       ├── sync.rs       # One file per subcommand
-│       └── status.rs
+│       ├── sync.rs       # Individual file for a subcommand
+│       └── status.rs     # Individual file for a subcommand
 └── tests/
-    └── cli.rs            # Integration tests that execute the binary
+    └── cli.rs            # Integration tests that run the compiled binary
 ```
 
-The most important rule is simple: **keep `main.rs` thin**. Even for a small CLI, place
-the actual behavior in `lib.rs`. Let `main` parse arguments, call the library, and
-convert the final `Result` into the process outcome.
+### The thin entry point rule
+To keep your code modular and testable, **do not place business logic in your `main.rs` file**. Instead, your `main.rs` file should only:
+1. Parse command-line arguments.
+2. Call an entry function defined in your `lib.rs` file.
+3. Map any returned errors to system exit codes.
 
 ```rust
 use clap::Parser;
@@ -37,168 +45,143 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-This structure keeps the application logic unit-testable without spawning a process. It
-also allows the tool to be reused as a library later if that becomes useful.
+Placing the primary behavior in `lib.rs` allows you to write unit tests for your application logic without spawning a separate operating system process. This layout also makes it easy to reuse your core application code as a library in other projects.
 
-## 11.2 Shape B: a library crate
+## Layout for library crates
+
+The following structure is recommended for library crates that publish APIs for other applications to use:
 
 ```text
 mylib/
 ├── Cargo.toml
-├── README.md             # Can also serve as the crate's front-page docs
+├── README.md             # Explains the purpose of the library and contains usage examples
 ├── src/
-│   ├── lib.rs            # Crate docs, module declarations, and re-exports
-│   ├── error.rs          # The crate's thiserror enum
-│   ├── client.rs         # Main behavior
-│   └── types.rs          # Supporting public and internal types
+│   ├── lib.rs            # Exposes the public modules and contains crate-level documentation
+│   ├── error.rs          # Declares the library's custom `thiserror` enum
+│   ├── client.rs         # Implements the primary library client
+│   └── types.rs          # Declares public and internal data types
 ├── examples/
-│   └── basic.rs          # Run with `cargo run --example basic`
+│   └── basic.rs          # Demonstrates basic library usage
 ├── benches/
-│   └── throughput.rs     # criterion benchmarks
+│   └── throughput.rs     # Benchmarks created using Criterion
 └── tests/
-    └── integration.rs    # Tests through the public API
+    └── integration.rs    # Verification tests using only the public API
 ```
 
-A library's `lib.rs` usually begins with `//!` crate-level documentation. You can also
-reuse the README directly:
+### Writing library entry files (`lib.rs`)
+The `lib.rs` file should contain your crate-level documentation and serve as a gateway to your public types. You can reuse your `README.md` file directly in your source documentation using the following syntax:
 
 ```rust
 #![doc = include_str!("../README.md")]
 ```
 
-The rest of `lib.rs` should mostly contain module declarations and curated re-exports:
+Structure your `lib.rs` to declare internal modules and re-export only the selected public types. This keeps your internal module tree private and allows you to reorganize your implementation later without breaking callers:
 
 ```rust
+// Declare internal modules.
 mod client;
 mod error;
 mod types;
 
+// Re-export public items to the root level.
 pub use client::Client;
 pub use error::Error;
 ```
 
-Users can now write `mylib::Client` instead of depending on the internal path
-`mylib::client::Client`. This keeps the module tree private and gives you room to
-reorganize the implementation without breaking callers.
+With this layout, users can write `use mylib::Client;` directly instead of referencing the private path `use mylib::client::Client;`.
 
-For a library with a deliberately documented public API, consider adding
-`#![deny(missing_docs)]`. This turns missing public documentation into a build error.
-The `examples/` directory is also useful because those programs can be compiled in CI,
-which helps detect examples that no longer match the API.
+### Recommended practices for libraries
+* **Turn on documentation enforcement**: Add `#![deny(missing_docs)]` to your `lib.rs` file to cause compilation to fail if a public API item lacks documentation comments.
+* **Keep examples compiled**: The `examples/` directory is automatically compiled when you run tests. This ensures your code examples remain compatible with your API changes.
 
-## 11.3 Shape C: a workspace service
+## Layout for workspace-based services
 
-The following tree applies the layered architecture from chapters 8 and 9 to a complete
-service:
+For larger applications (such as microservices or backend APIs), use a layered Cargo workspace to enforce clean boundaries between your core business rules and infrastructure dependencies:
 
 ```text
 docstore/
-├── Cargo.toml                     # [workspace] and [workspace.dependencies]
-├── Cargo.lock                     # Committed because this is an application
-├── rust-toolchain.toml            # Pins the compiler version
-├── deny.toml                      # cargo-deny policy
-├── docker-compose.yml             # Local infrastructure such as PostgreSQL
-├── Dockerfile                     # Multi-stage build and slim runtime image
+├── Cargo.toml                     # Workspace manifest mapping members and dependencies
+├── Cargo.lock                     # Committed to version control for deterministic builds
+├── rust-toolchain.toml            # Specifies the exact Rust compiler version
+├── deny.toml                      # Defines allowed dependency licenses and warnings
+├── docker-compose.yml             # Sets up local databases or other services
+├── Dockerfile                     # Multi-stage Docker build for clean runtime images
 ├── .github/
 │   └── workflows/
-│       └── ci.yml                 # fmt, clippy, tests, and audit
+│       └── ci.yml                 # Automated pipeline for formatting, linting, and testing
 │
 └── crates/
-    ├── domain/                    # Core rules; no infrastructure I/O
+    ├── domain/                    # Pure business logic (entities, services, errors, traits)
     │   ├── Cargo.toml
     │   └── src/
-    │       ├── lib.rs             # Modules and curated re-exports
-    │       ├── ids.rs             # DocumentId, UserId, and other newtypes
+    │       ├── lib.rs             # Curated exports for the domain crate
+    │       ├── ids.rs             # Unique ID newtypes (DocumentId, UserId)
     │       ├── model/
     │       │   ├── mod.rs
-    │       │   └── document.rs    # Document and validated value objects
+    │       │   └── document.rs    # Core Document model and parsing constructors
     │       ├── events.rs          # DocumentEvent enum
     │       ├── errors.rs          # DocumentError using thiserror
     │       └── services/
     │           ├── mod.rs
     │           └── document_service.rs
     │
-    ├── store-postgres/            # Adapter implementing domain repository traits
+    ├── store-postgres/            # PostgreSQL adapter that implements domain traits
     │   ├── Cargo.toml
     │   ├── migrations/
-    │   │   └── 0001_create_documents.sql
+    │   │   └── 0001_create_documents.sql # SQL migration scripts
     │   └── src/
     │       ├── lib.rs
     │       └── repository.rs
     │
-    ├── store-s3/                  # Blob-storage adapter
+    ├── store-s3/                  # S3 storage adapter that implements domain blob traits
     │   └── src/
     │       ├── lib.rs
     │       └── blob_store.rs
     │
-    └── server/                    # HTTP edge and dependency wiring
+    └── server/                    # Web routing edge and service initialization
         ├── Cargo.toml
         └── src/
-            ├── main.rs            # Composition root only
-            ├── config.rs          # Environment/files into a typed Config
-            ├── telemetry.rs       # tracing subscriber configuration
+            ├── main.rs            # The composition root
+            ├── config.rs          # Parses settings from files or environment variables
+            ├── telemetry.rs       # Configures tracing subscribers
             └── api/
-                ├── mod.rs          # Router assembly
-                ├── documents.rs    # /documents handlers
-                └── error_map.rs    # Domain errors to HTTP responses
+                ├── mod.rs          # Assembles the routing table
+                ├── documents.rs    # HTTP handlers for /documents endpoints
+                └── error_map.rs    # Maps custom domain errors to HTTP status codes
 ```
 
-Several placement rules are worth stating explicitly.
+### Essential architecture placement rules
+* **Traits belong next to their consumers**: Define repository and storage traits inside the `domain` crate, next to the services that use them. Your infrastructure adapter crates (such as `store-postgres`) import the domain crate to implement those traits.
+* **Co-locate tests**: Place unit tests inside the same modules they verify. Keep infrastructure integration tests inside their respective adapter crates, and place only thin end-to-end smoke tests in the `server` layer.
+* **Keep migrations in the adapter**: Store SQL migration files inside the `store-postgres` crate. This makes the database adapter the clear owner of the schema.
+* **Consolidate error mapping**: Keep all error-to-HTTP mapping logic in a single file (`error_map.rs`). Use an exhaustive match to ensure that if you add a new error variant to the domain, the compiler alerts you to assign its corresponding HTTP status code.
+* **Use `main.rs` as a composition root**: Your `main.rs` file should only configure startup tasks: reading configuration settings, initializing telemetry, instantiating database adapters, wiring services, and starting the web listener. Do not write business logic inside the startup entry point.
 
-**Traits live beside their consumers.** A service defines the repository or gateway
-behavior it needs, and an adapter implements that contract. A shared `traits` crate
-often collects provider-oriented interfaces whose ownership is difficult to identify.
+## Module organization rules
 
-**Tests stay close to the behavior they verify.** Unit tests belong in or beside service
-modules. Adapters should include a smaller set of integration tests against real
-infrastructure, while the server layer usually needs only a thin set of end-to-end smoke
-tests.
+When structuring modules inside a single crate, use the modern Rust module layout:
+* Place the parent module code in `foo.rs`.
+* Place any child modules in a sibling directory named `foo/`.
 
-**Migrations belong to the adapter that owns the schema.** Keeping SQL migrations in
-`store-postgres` makes the ownership boundary explicit.
+Avoid placing a `mod.rs` file inside every subdirectory. Using named module files makes it easier to navigate large projects in your editor because you do not have multiple open files named `mod.rs`.
 
-**Error mapping lives in one place.** An exhaustive match in `error_map.rs` translates
-domain errors into HTTP responses. When a new error variant appears, the compiler
-identifies the API mapping that still needs a decision.
+### Visibility guidelines
+* **Start private**: Keep variables, functions, and structs private to their module by default.
+* **Promote to internal sharing**: Use `pub(crate)` if a sibling module inside the same crate must access the item.
+* **Expose to public APIs carefully**: Use bare `pub` only when an item is a deliberate part of your crate's public API contract.
+* **Avoid bulk imports**: Do not import modules using glob stars (such as `use crate::prelude::*`) unless the crate specifically requires a prelude module. Explicit, individual imports make code reviews easier, and tools like rust-analyzer manage them automatically.
 
-**`main.rs` performs wiring, not business logic.** It should load configuration, initialize
-telemetry, construct adapters and services, assemble the router, and start the server.
-Business rules belong in the tested domain or application layers rather than in startup
-code.
+## Recurring architectural patterns
 
-## 11.4 Module conventions inside a crate
+The following five patterns are commonly used in production-grade Rust services:
 
-In the modern module style, a module can live in `foo.rs`, while its child modules live
-in the sibling directory `foo/`. Prefer this arrangement over placing `mod.rs` in every
-directory; using named module files can make a large project easier to navigate than
-having many files with the same `mod.rs` name.
+### 1. Parse configuration once at startup
+Deserialize environment variables and configuration files into a single, typed `Config` struct immediately when your application starts. Do not read environment variables directly from inside your core business logic services.
 
-Split a module when it contains more than one meaningful concept or has acquired a
-second reason to change. Line count alone is not a reliable boundary.
+If a configuration setting is missing or malformed, the application should terminate immediately at startup with a clear error message. This prevents unexpected runtime failures later.
 
-Keep visibility narrow by default. Start with private items, promote them to
-`pub(crate)` when sibling modules need access, and treat each bare `pub` as a deliberate
-API decision. Similarly, avoid broad preludes such as `use crate::prelude::*` unless the
-crate genuinely benefits from one. Explicit imports make reviews easier, and
-rust-analyzer can manage them with little effort.
-
-## 11.5 Recurring architectural patterns
-
-Beyond the layered skeleton, five patterns appear in many production Rust services.
-
-### Typed configuration, parsed once
-
-Deserialize environment variables and configuration files into a single `Config` value
-during startup. After the opening section of `main`, application code should not read
-environment variables directly; it should receive typed configuration.
-
-Fail fast. A missing or malformed setting should stop the process at startup with a
-useful message rather than fail at 03:00 when the value is first used.
-
-### Builders for constructors with many options
-
-Rust has no keyword arguments or default parameters. Once a constructor grows beyond a
-few related arguments, a builder usually becomes easier to read:
+### 2. The builder pattern for complex constructors
+Rust does not support default parameter values or named keyword arguments in function calls. If a constructor requires more than a few parameters, use the builder pattern to improve code readability:
 
 ```rust
 let server = Server::builder()
@@ -207,70 +190,48 @@ let server = Server::builder()
     .build()?;
 ```
 
-Let `build()` return `Result` when combinations can be invalid. This creates one
-validation point. Crates such as `bon` or `typed-builder` can generate the repetitive
-parts.
+Let the `.build()` method return a `Result` if certain parameter combinations can be invalid. This establishes a single validation boundary for your custom type. You can use helper crates such as `bon` or `typed-builder` to generate builder code automatically.
 
-### Graceful shutdown
+### 3. Graceful shutdown
+Ensure that your application handles terminating signals (such as Ctrl-C or SIGTERM) cleanly using your async runtime:
+1. Stop accepting new incoming requests.
+2. Allow active, in-flight operations a bounded time window to complete.
+3. Flush any pending telemetry or logging buffers before the process terminates.
 
-Listen for Ctrl-C and SIGTERM through `tokio::signal`. Stop accepting new work, allow
-in-flight operations a bounded amount of time to finish, and flush telemetry before the
-process exits.
+This is critical for containerized environments like Kubernetes, which expect processes to stop gracefully when receiving signals.
 
-Kubernetes, load balancers, and deployment systems assume this behavior. Adding graceful
-shutdown late can require changes across many task-spawning locations, so it is useful
-to establish the structure early in a service.
+### 4. Transactional outbox with derived projections
+To maintain consistency across services, use the transactional-outbox pattern to write your current application state and an immutable audit event together inside the same database transaction.
 
-### Atomic state and event writes, followed by projections
+Once the transaction commits successfully, you can broadcast the audit event to update derived projections (such as a search index, key-value caches, or outbound notifications). Because projections are derived, you can rebuild them at any time from the source event stream.
 
-The transactional-outbox pattern commits current state and an immutable event in the
-same transaction. After the commit succeeds, downstream consumers can build projections
-such as search indexes, caches, or notifications.
+### 5. Actor-based state management
+If sharing variables across threads using standard locking (`Arc<Mutex<T>>`) becomes complex or causes performance bottlenecks, use an actor-based pattern:
+1. Spawn a single async task that retains exclusive ownership of the state.
+2. Allow other threads and tasks to interact with the state exclusively by sending messages through a Multi-Producer, Single-Consumer (`mpsc`) channel.
 
-Those projections are derived and rebuildable rather than authoritative sources of
-state. Rust supports this model well because enums make event sets explicit, ownership
-helps prevent accidental reuse after commit, and crate boundaries keep projection code
-out of the write path.
+This approach removes shared mutable data and locking rules from your core business logic.
 
-### Actor-style task ownership
+## Naming conventions
 
-When shared-state locking becomes difficult to reason about, invert the relationship.
-Let one spawned task own the state, and let other tasks communicate with it through a
-typed `mpsc` channel.
+Following standard ecosystem naming rules ensures that your APIs read consistently:
+* **Crates and modules**: Use `snake_case` using short, descriptive nouns (for example, `domain` or `store_postgres`).
+* **Types and traits**: Use `CamelCase` (or `PascalCase`). Trait names should describe capabilities (for example, `OrderStore`, `Describe`, or `Serialize`) rather than mimic patterns like `IThing` or `ThingInterface`.
 
-This removes shared mutation and lock poisoning from the design. It is a natural
-extension of the “channels for flow” principle from chapter 7. Consider the pattern when
-an `Arc<Mutex<_>>` begins to accumulate several unrelated `.lock()` call sites.
+### Standard constructor naming
+* Use **`new`** for constructors that cannot fail (infallible).
+* Use **`try_new`** for constructors that validate parameters and return a `Result` type (fallible).
+* Use **`from_x`** or **`with_x`** when providing alternative constructors or custom configurations.
 
-## 11.6 Naming conventions
-
-Use `snake_case` for crates and modules, usually with short nouns such as `domain` or
-`store_postgres`. Use `CamelCase` for types and traits. Trait names should describe
-capabilities—`OrderStore`, `Describe`, or `Serialize`—rather than imitate conventions
-such as `IThing` or `ThingInterface`.
-
-Follow standard constructor names:
-
-- `new` for infallible construction
-- `try_new` for construction that returns `Result`
-- `from_x` and `with_x` for alternative construction or configuration
-
-Conversions should also follow standard-library conventions:
-
-- `as_` for a cheap borrowed view
-- `to_` for a conversion that may allocate or copy
-- `into_` for a consuming conversion
-
-These conventions are not cosmetic. They make your code read like the ecosystem around
-it and reduce the amount of explanation each API requires.
+### Standard type conversion prefixes
+* Use **`as_`** for cheap, read-only conversions that return a borrowed reference (for example, `as_str`).
+* Use **`to_`** for conversions that require allocating memory or copying data (for example, `to_string`).
+* Use **`into_`** for conversions that consume the original variable and return a new type (for example, `into_bytes`).
 
 ## Summary
 
-Three layouts cover a large share of Rust projects: a CLI with a thin `main`, a library
-with a curated public surface, and a layered workspace whose dependencies point toward
-the domain.
-
-Within a crate, prefer the `foo.rs` plus `foo/` layout, keep visibility private by
-default, and use explicit imports. Across the architecture, reuse typed configuration,
-builders, graceful shutdown, transactional outboxes with projections, and actor-style
-ownership when shared locking becomes cumbersome.
+This chapter discussed project structure and architecture guidelines:
+* **Layout configurations**: Use three primary shapes: a CLI tool with a thin `main.rs`, a library crate with curated root re-exports, or a multi-crate workspace.
+* **Inward-pointing dependencies**: Design workspaces so that dependency arrows point toward the core domain logic.
+* **Module cleanliness**: Organize sibling modules using matching folders, keep visibility private by default, and prefer explicit imports over glob stars.
+* **System robustness**: Implement configuration validation once at startup, use builders for complex constructors, support graceful shutdown, commit audit events atomically with state, and use channels to pass messages instead of complex shared locks.

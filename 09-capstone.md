@@ -1,51 +1,64 @@
-# Chapter 9: Capstone: A Real Service
+# Capstone project: A versioned document store
 
-This chapter assembles the guide into one realistic design: a **versioned document store
-with an audit trail**. Each earlier concept now carries part of the architecture. The
-final sections collect the main principles, identify recurring anti-patterns, discuss
-when Rust may be the wrong choice, and suggest where to continue.
+This chapter combines the concepts from previous chapters into a single, complete system design: a versioned document store with an audit log.
 
-## 9.1 Requirements
+By examining this project, you will see how each Rust language feature fits into a clean, layered architecture. This chapter also summarizes key Rust design principles, identifies common anti-patterns, and outlines when to choose (or avoid) Rust for your projects.
 
-Users can create and update documents. Updates use _optimistic locking_, so a stale
-write returns enough context for the client to respond instead of silently overwriting
-newer data. Each change is recorded in an immutable audit trail. A search index is
-maintained as a derived, rebuildable view rather than the source of truth. Postgres and
-S3 provide the storage implementations, while the core logic remains independent of
-those technologies.
+## Project requirements
 
-## 9.2 Workspace (ch. 8)
+The capstone application is a document storage service with the following requirements:
+* **Document management**: Users can create and update documents.
+* **Optimistic locking**: Updates must use optimistic locking to prevent stale writes. If a write conflict occurs, the system returns detailed error context so the client can handle it instead of silently overwriting newer data.
+* **Audit log**: Every change to a document must be recorded in an immutable, append-only audit log.
+* **Search index**: The application maintains a search index as a derived, rebuildable projection of the audit log (not as the source of truth).
+* **Storage abstraction**: The core business logic must remain independent of specific storage technologies. PostgreSQL and Amazon S3 provide the production storage implementations.
 
-```
+## Workspace structure
+
+The project uses a Cargo workspace to separate core business logic from external adapter implementations:
+
+```text
 docstore/
-├── Cargo.toml               # workspace and shared dependency versions
+├── Cargo.toml               # Workspace manifest and shared dependency versions
 └── crates/
-    ├── domain/               # types, errors, traits, services — no sqlx, no aws-sdk
-    ├── store-postgres/       # implements the repository trait
-    ├── store-s3/             # implements the blob trait
-    └── server/               # axum + composition root
+    ├── domain/              # Core logic: types, errors, traits, and services
+    │                        # Dependencies: uuid, thiserror (no sqlx or aws-sdk)
+    │
+    ├── store-postgres/      # Implements domain repository traits using PostgreSQL
+    │                        # Dependencies: domain, sqlx
+    │
+    ├── store-s3/            # Implements domain blob storage traits using Amazon S3
+    │                        # Dependencies: domain, aws-sdk-s3
+    │
+    └── server/              # Application entry point (routing, configurations, startup)
+                             # Dependencies: domain, store-postgres, store-s3, axum
 ```
 
-Dependency arrows point inward. Because the `domain` crate does not declare `sqlx`,
-SQL-specific code cannot be added there without changing its manifest and dependency
-boundary.
+Dependency arrows point inward toward the domain layer. Because the `domain` crate does not list database or cloud storage SDKs in its `Cargo.toml`, the compiler guarantees that infrastructure-specific code cannot enter your core business logic.
 
-## 9.3 Types (ch. 4)
+## Domain types
 
-The domain uses newtype identifiers to distinguish arguments, a parsed name type to
-represent validated input, and an enum whose event variants carry the data they need:
+The application uses the newtype pattern to create distinct identifier types, a parsing constructor to validate document names, and an enum to represent audit events:
 
 ```rust
-pub struct DocumentId(Uuid);
-pub struct UserId(Uuid);
+pub struct DocumentId(pub Uuid);
+pub struct UserId(pub Uuid);
 
-// The private field prevents construction without validation.
+// The private inner field prevents direct instantiation.
 pub struct DocumentName(String);
 
 impl DocumentName {
+    // This constructor serves as the validation boundary.
     pub fn try_new(raw: &str) -> Result<Self, DomainError> {
-        // Parse untrusted input into a valid domain value.
-        /* ... */
+        if raw.is_empty() || raw.len() > 255 {
+            Err(DomainError::InvalidName)
+        } else {
+            Ok(Self(raw.to_owned()))
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -73,10 +86,9 @@ pub enum DocumentEvent {
 }
 ```
 
-## 9.4 Errors (ch. 5)
+## Error design
 
-Each variant carries the context its handlers need, and the storage error is preserved
-as the underlying cause:
+The domain layer uses a custom enum to represent precise failure states. Each variant carries the specific context required by its handlers:
 
 ```rust
 #[derive(Debug, thiserror::Error)]
@@ -92,19 +104,19 @@ pub enum DocumentError {
         modified_at: DateTime<Utc>,
     },
 
-    // The underlying source chain remains available.
-    #[error("storage failure")]
+    // Preserves the underlying storage error source chain.
+    #[error("storage failure: {0}")]
     Store(#[from] StoreError),
 }
 ```
 
-## 9.5 The port (ch. 6)
+## Storage abstraction with traits
 
-The consumer defines a focused, transaction-aware contract with the thread-safety bounds
-required by the service:
+The domain defines a narrow, transaction-aware trait interface. This trait uses the thread-safety bounds required by the service:
 
 ```rust
 pub trait DocumentRepository: Send + Sync {
+    // The associated type represents an implementation-specific transaction handle.
     type Tx: Send;
 
     async fn begin(&self) -> Result<Self::Tx, StoreError>;
@@ -131,7 +143,9 @@ pub trait DocumentRepository: Send + Sync {
 }
 ```
 
-## 9.6 The heart: `update`, annotated
+## Document service logic
+
+The `DocumentService` coordinates document updates. It uses optimistic locking to prevent stale writes and ensures atomic persistence of document state and audit logs:
 
 ```rust
 impl<R: DocumentRepository> DocumentService<R> {
@@ -139,17 +153,17 @@ impl<R: DocumentRepository> DocumentService<R> {
         &self,
         command: UpdateDocument,
     ) -> Result<Document, DocumentError> {
-        // ① Begin a transaction whose concrete type is adapter-specific.
+        // 1. Begin a transaction. The concrete transaction type is adapter-specific.
         let mut tx = self.repo.begin().await?;
 
-        // ② Convert absence into a typed domain error.
+        // 2. Load the document or return a NotFound error if it does not exist.
         let current = self
             .repo
             .load_for_update(&mut tx, command.id)
             .await?
             .ok_or(DocumentError::NotFound(command.id))?;
 
-        // ③ Reject stale writes through optimistic locking.
+        // 3. Prevent stale writes using optimistic locking.
         if current.version != command.expected_version {
             return Err(DocumentError::VersionConflict {
                 expected: command.expected_version,
@@ -159,16 +173,18 @@ impl<R: DocumentRepository> DocumentService<R> {
             });
         }
 
-        // ④ Apply pure domain logic.
+        // 4. Apply business calculations and generate the audit event.
         let next = current.apply(command)?;
         let event = DocumentEvent::updated(&current, &next);
 
-        // ⑤–⑦ Persist state and audit event atomically.
+        // 5. Persist the updated state and the audit event atomically in the transaction.
         self.repo.save_in_tx(&mut tx, &next).await?;
         self.repo.append_event_in_tx(&mut tx, &event).await?;
+        
+        // 6. Commit the transaction. This consumes the transaction handle `tx`.
         self.repo.commit(tx).await?;
 
-        // ⑧ Update derived projections after the authoritative commit.
+        // 7. Broadcast the event to update the search index projection.
         self.events.broadcast(event);
 
         Ok(next)
@@ -176,120 +192,167 @@ impl<R: DocumentRepository> DocumentService<R> {
 }
 ```
 
-The numbered steps connect directly to earlier chapters:
+### Analysis of the update logic
+* **Abstract transactions**: The service starts a transaction using `self.repo.begin()`. The domain does not know whether this uses a PostgreSQL connection, an S3 versioning handle, or an in-memory collection.
+* **Commit-once protocol**: The `commit` method takes the transaction handle `tx` by value. Move semantics guarantee that you cannot accidentally reuse a transaction after it has been committed.
+* **Consistent projections**: The service broadcasts the update event to the search index *only* after the database transaction has committed successfully. This prevents the search index from reflecting uncommitted database changes.
 
-1. **①** opens a transaction whose concrete type remains hidden from the domain.
-2. **②** converts absence into a typed `NotFound` error through `ok_or` and `?`.
-3. **③** performs optimistic locking and constructs the conflict error while the
-   expected version, actual version, author, and timestamp are all available.
-4. **④** applies pure domain logic to ordinary values, which keeps the rule easy to
-   test.
-5. **⑤–⑦** persist the new state and its audit event atomically. Because `commit(tx)`
-   consumes `Tx`, a committed transaction cannot be reused.
-6. **⑧** broadcasts the event to the search-index task. The index is a rebuildable
-   projection of the audit stream rather than an authoritative store.
+## Testing the service
 
-If the event log must be append-only, enforce that requirement in the database as well
-as in application code, for example by restricting `UPDATE` and `DELETE` permissions. A
-comment alone does not protect the invariant.
+By using traits to decouple external dependencies, you can test the entire update workflow using an in-memory fake.
 
-## 9.7 The proof (ch. 8)
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
 
-A small `FakeRepo` can use `type Tx = ()` and expose a `fail_commit` switch. Two focused
-tests are then enough to pin the main contracts: the happy path persists both the
-document and its event, while a stale update returns
-`VersionConflict { expected: 2, actual: 3, .. }`, verified with `matches!`. No database is
-required.
+    #[derive(Default)]
+    struct FakeRepo {
+        documents: Mutex<Vec<Document>>,
+        fail_commit: bool,
+    }
 
-In the `server` crate, `main` passes `PostgresDocumentRepository` to the same generic
-service. Switching between the test and production worlds changes one argument at the
-composition root.
+    impl DocumentRepository for FakeRepo {
+        // The fake repository does not need a real transaction handle.
+        type Tx = ();
 
-The design can now be reviewed by asking where each requirement is enforced. ID mix-ups:
-newtypes. Invalid names: the parsing constructor. Unhandled events: exhaustive `match`.
-Ignored failures: `Result` + `?`. Double-commit: move semantics on `Tx`. Domain touching
-SQL: crate walls. Races in the fan-out: `Send`/`Sync`. Many of these guarantees are
-represented in types or crate dependencies and are therefore checked by the compiler.
-The result comes from several language features working together.
+        async fn begin(&self) -> Result<Self::Tx, StoreError> {
+            Ok(())
+        }
 
-## 9.8 Principles at a glance
+        async fn load_for_update(
+            &self,
+            _tx: &mut Self::Tx,
+            id: DocumentId,
+        ) -> Result<Option<Document>, StoreError> {
+            let docs = self.documents.lock().unwrap();
+            Ok(docs.iter().find(|d| d.id == id).cloned())
+        }
 
-| Habit                                                               | From  |
-| ------------------------------------------------------------------- | ----- |
-| Clarify ownership before resolving borrow conflicts                | ch. 3 |
-| Use shared readers or one exclusive writer                         | ch. 3 |
-| Accept `&str`, store `String`; owner/view pairs everywhere          | ch. 3 |
-| Model states as enums; make illegal states unrepresentable          | ch. 4 |
-| Use newtypes when identifiers or validated values need distinction  | ch. 4 |
-| Errors are designed data: variants carry what handlers need         | ch. 5 |
-| Preserve underlying causes with `#[from]` or `#[source]`            | ch. 5 |
-| `thiserror` where code consumes errors; `anyhow` at human edges     | ch. 5 |
-| The consumer owns the trait; infrastructure implements it           | ch. 6 |
-| Abstract the transaction; let moves enforce commit-once             | ch. 6 |
-| Sharing is a choice, visible in types; channels for flow            | ch. 7 |
-| Avoid blocking the runtime or holding a std lock across `.await`    | ch. 7 |
-| Use crate dependencies to enforce important architectural arrows    | ch. 8 |
-| Keep concrete wiring in one composition root                        | ch. 8 |
-| Mock the trait, assert the variant — tests as contracts             | ch. 8 |
+        async fn save_in_tx(
+            &self,
+            _tx: &mut Self::Tx,
+            document: &Document,
+        ) -> Result<(), StoreError> {
+            let mut docs = self.documents.lock().unwrap();
+            if let Some(pos) = docs.iter().position(|d| d.id == document.id) {
+                docs[pos] = document.clone();
+            } else {
+                docs.push(document.clone());
+            }
+            Ok(())
+        }
 
-## 9.9 Recurring anti-patterns
+        async fn append_event_in_tx(
+            &self,
+            _tx: &mut Self::Tx,
+            _event: &DocumentEvent,
+        ) -> Result<(), StoreError> {
+            Ok(())
+        }
 
-The following patterns deserve review because they often weaken otherwise useful
-boundaries:
+        async fn commit(&self, _tx: Self::Tx) -> Result<(), StoreError> {
+            if self.fail_commit {
+                Err(StoreError::ConnectionLost)
+            } else {
+                Ok(())
+            }
+        }
+    }
 
-- A fake newtype such as `type UserId = Uuid`, which changes the name but not the type.
-- String-only errors that discard the underlying type and source chain.
-- A provider-owned, overly broad trait that gives every consumer more operations than it
-  needs.
-- An overly broad crate in which domain rules and SQL implementation details share the
-  same dependency boundary.
-- `Arc<Mutex<…>>` used throughout the system without a clear ownership boundary.
-- Reflexive `.clone()` calls used only to silence the borrow checker. Deliberate clones
-  are valid; unexamined clones accumulate design debt.
-- Blocking operations inside async tasks.
-- Business logic concentrated in HTTP handlers, beyond the reach of fast unit tests.
-- `unsafe` blocks without a comment explaining the invariant they uphold.
+    #[tokio::test]
+    async fn version_conflict_returns_detailed_context() {
+        let repo = FakeRepo::default();
+        repo.documents.lock().unwrap().push(Document {
+            id: DocumentId(Uuid::nil()),
+            name: DocumentName::try_new("plan.md").unwrap(),
+            version: 3,
+            updated_by: UserId(Uuid::nil()),
+            updated_at: Utc::now(),
+        });
 
-All of these patterns can compile. Rust provides a stronger safety baseline, but the
-quality of the architecture still depends on the decisions expressed through types,
-modules, and dependencies.
+        let service = DocumentService::new(repo);
+        let result = service.update(UpdateDocument {
+            id: DocumentId(Uuid::nil()),
+            expected_version: 2, // Stale version
+            name: "new-plan.md".to_owned(),
+        }).await;
 
-## 9.10 When not to choose Rust
+        assert!(matches!(
+            result,
+            Err(DocumentError::VersionConflict { expected: 2, actual: 3, .. })
+        ));
+    }
+}
+```
 
-Rust justifies its learning and development cost when the problem benefits from
-predictable latency without a garbage collector, a tight memory footprint,
-race-resistant concurrency, small static binaries, WebAssembly or embedded targets, C
-interoperability, or compiler-enforced invariants in a long-lived system.
+This unit test is entirely self-contained and fast. To run the production application, you wire the generic `DocumentService` with `PostgresDocumentRepository` at your composition root. Swapping from testing mode to production mode requires changing only a single argument where you instantiate your service.
 
-It may be the wrong trade for throwaway scripts, rapid machine-learning experiments,
-GUI-heavy applications, or a deadline-driven CRUD service maintained by a team already
-highly productive in a garbage-collected language. Choose Rust because its guarantees
-match concrete failure modes in the problem, and be able to name those guarantees.
+## Core design habits
 
-## 9.11 Where to continue
+The following table summarizes the core design guidelines covered throughout this guide:
 
-Useful next resources include:
+| Category | Recommended Habit |
+| :--- | :--- |
+| **Memory** | Resolve ownership structure before handling borrow conflicts (Chapter 3). |
+| **Memory** | Enforce either multiple shared read-only references or a single exclusive mutable reference (Chapter 3). |
+| **Types** | Accept `&str` in parameters and store `String` in structs (Chapter 3). |
+| **Types** | Represent states using enums to make invalid states unrepresentable (Chapter 4). |
+| **Types** | Wrap raw identifiers or validated primitives in custom newtype structs (Chapter 4). |
+| **Errors** | Model failures as enums where variants carry specific error context (Chapter 5). |
+| **Errors** | Preserve original error causes using `#[from]` or `#[source]` attributes (Chapter 5). |
+| **Architecture** | Define trait contracts next to the consumer. Infrastructure layer implements them (Chapter 6). |
+| **Architecture** | Use associated types to hide adapter details and use move semantics to enforce once-only execution (Chapter 6). |
+| **Concurrency** | Share state explicitly in your types. Use channels for data flow and locks for small shared states (Chapter 7). |
+| **Concurrency** | Do not execute blocking calls in async workers or hold synchronous locks across `.await` boundaries (Chapter 7). |
+| **Layout** | Enforce architectural boundaries using separate package-level crate dependencies (Chapter 8). |
+| **Testing** | Use fakes to test business logic quickly and deterministicly in memory (Chapter 8). |
 
-- _The Rust Programming Language_, the official book, for the syntax and language
-  coverage this guide intentionally skips.
-- **Rust by Example** for a more example-driven path.
-- _Rust for Rustaceans_ by Jon Gjengset for deeper treatment of traits, API lifetimes,
-  and async internals.
-- The **Tokio tutorial** for production-oriented asynchronous Rust.
-- The _Rustonomicon_ for understanding the guarantees that `unsafe` code must preserve.
-  It is most useful for learning the boundary before writing unsafe code.
+## Common anti-patterns
 
-Then build a system with a real architectural seam, such as a service that uses both a
-database and a queue. Rust's design instincts are learned most effectively through
-repeated, concrete feedback from the compiler.
+The following patterns can weaken otherwise clean architectural boundaries:
+* **Fake newtypes**: Using type aliases (such as `type UserId = Uuid`) instead of wrapping primitives in tuple structs. Type aliases do not provide compile-time safety against swapped arguments.
+* **String-only errors**: Discarding detailed error context and underlying causes by converting all failures to raw strings.
+* **Overly broad traits**: Defining massive, provider-owned traits that force consumers to implement unused methods.
+* **Leaky crates**: Placing domain rules and database adapter drivers in the same crate, allowing implementation details to mix with core rules.
+* **Unbounded shared state**: Using `Arc<Mutex<T>>` throughout your entire application without a clear data ownership hierarchy.
+* **Reflexive cloning**: Automatically calling `.clone()` whenever the compiler reports a borrow error instead of clarifying your ownership structure.
+* **Blocking async threads**: Running long-running synchronous code inside async workers, blocking the runtime thread pool.
+* **HTTP handler logic**: Putting complex business calculations directly inside web routing handlers where they are difficult to unit-test.
+* **Document-less unsafe blocks**: Writing `unsafe` blocks without adding comments that document the physical safety invariants being upheld.
 
-## Final takeaway
+## Evaluate when to use Rust
 
-A recurring Rust design habit is **moving guarantees earlier**: from production
-incidents into tests, from tests into types, and from types into compile-time ownership
-checks. Each chapter illustrated that movement by encoding states as enums, failures as
-variants, interfaces as consumer-owned traits, thread safety as bounds, and
-architectural rules as crate dependencies.
+Rust provides significant advantages for applications that require:
+* Predictable, low-latency execution without a garbage collector.
+* A minimal memory footprint.
+* Thread-safe, highly concurrent systems.
+* Small, self-contained executable binaries.
+* WebAssembly or embedded platform targets.
+* High-performance C library interoperability.
+* Strong, compiler-enforced business invariants.
 
-Learn this design movement rather than memorizing syntax alone. The habit remains useful
-even when you return to another language.
+### When Rust may not be the optimal choice
+Rust may not be the most effective choice for:
+* Short utility scripts or throwaway automation tools.
+* Quick machine-learning or data-science experiments.
+* Rapid prototyping where requirements change constantly and compile-time boundaries add friction.
+* Standard database CRUD services where a team is already highly productive in a garbage-collected language like Go, Java, or Node.js.
+
+## Recommended learning resources
+
+To continue your Rust learning path, consult the following resources:
+* **The Rust Programming Language**: The official book covers fundamental Rust syntax and language features in detail.
+* **Rust by Example**: Provides an interactive, example-driven approach to learning the language.
+* **Rust for Rustaceans (by Jon Gjengset)**: Offers a deep dive into advanced traits, lifetime annotations, and async runtime internals.
+* **The Tokio Tutorial**: Focuses on building production-grade, asynchronous applications in Rust.
+* **The Rustonomicon**: Details the exact memory safety guarantees and rules that you must preserve when writing `unsafe` code.
+
+### Final design movement
+The core theme of Rust development is **moving guarantees earlier in the lifecycle**:
+* Moving potential runtime issues into compile-time checks using types.
+* Moving manual verification into automated unit tests using fakes.
+* Moving architectural guidelines into compiler-enforced crate dependencies.
+
+Understanding this design movement will help you write robust, maintainable code in Rust and any other language.

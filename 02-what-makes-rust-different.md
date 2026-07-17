@@ -1,130 +1,124 @@
-# Chapter 2: What Makes Rust Different
+# What makes Rust different
 
-This chapter provides an orientation map. It introduces ten important differences
-through small examples and points to the chapter that develops each idea in more detail.
+This chapter provides an overview of the primary differences between Rust and other programming languages. It introduces ten key concepts and points to the chapters that discuss them in detail.
 
-Understanding these differences before translating familiar patterns directly into Rust
-syntax can prevent many early struggles with the compiler.
+Understanding these concepts before you write code will help you avoid common compilation errors.
 
-## 2.1 No garbage collector: ownership instead
+## Ownership instead of a garbage collector
 
-Most mainstream memory-safe languages reclaim memory through a runtime garbage
-collector. Rust instead uses ownership and borrowing rules that the compiler verifies
-before the program runs. When a value's owner leaves its scope, Rust runs the value's
-destructor and releases its resources.
+Most modern memory-safe programming languages use a runtime garbage collector to reclaim unused memory. Rust does not use a garbage collector. Instead, it uses a set of ownership and borrowing rules that the compiler checks before your program runs.
 
-This gives Rust deterministic cleanup without garbage-collection pauses. Files close,
-locks release, and heap allocations are freed at predictable points. The trade-off is
-that you need to understand ownership rules, including the fact that assignment moves
-ownership by default for many types:
+When a variable that owns a value goes out of scope, Rust automatically runs that value's destructor and releases its resources.
+
+This system provides several benefits:
+* **Deterministic cleanup**: Rust releases resources like memory, files, and locks immediately at predictable points.
+* **No runtime pauses**: Because there is no garbage collector running in the background, your program does not experience unexpected pauses.
+
+However, you must understand how ownership works. For example, assigning a value to a new variable moves ownership by default for many types, making the original variable invalid:
 
 ```rust
 let a = String::from("hi");
 let b = a; // Ownership moves to `b`.
 
-println!("{a}"); // Error: `a` is no longer valid.
+// println!("{a}"); // Compiler error: `a` is no longer valid.
 ```
 
-For many newcomers, this is the largest mental shift. Chapter 3 develops the model step
-by step.
+For more details about this model, see Chapter 3.
 
-## 2.2 Immutable by default
+## Immutable by default
 
-`let x = 5;` creates an immutable binding. Mutation is explicit: `let mut x = 5;`.
+By default, variables in Rust are immutable. This means you cannot change their value after they are bound.
 
-The same preference for explicit behavior appears in error handling, conversions, and
-cross-thread sharing. Rust asks you to state choices that some languages allow
-implicitly, which makes important changes easier to notice during review.
+```rust
+let x = 5;
+// x = 6; // Compiler error: cannot assign twice to immutable variable.
+```
 
-## 2.3 No universal `null`: `Option<T>` instead
+If you want to modify a variable, you must explicitly use the `mut` keyword:
 
-Safe Rust has no universal `null`, `nil`, or `undefined` reference. A `String` contains
-a valid string. When a value may be absent, the type expresses that possibility through
-`Option<T>`, which is either `Some(value)` or `None`.
+```rust
+let mut x = 5;
+x = 6; // This is valid.
+```
+
+This design encourages you to declare your intentions explicitly. Making mutation explicit makes code reviews easier and helps prevent unexpected state changes.
+
+## No null values
+
+Safe Rust does not have a universal `null`, `nil`, or `undefined` value. If a variable is of type `String`, it is guaranteed to contain a valid string.
+
+When a value can be absent, you must represent it using the standard library `Option<T>` enum. An `Option` is either:
+* **`Some(value)`**: Contains a value of type `T`.
+* **`None`**: Represents the absence of a value.
 
 ```rust
 fn find_user(name: &str) -> Option<User> {
-    /* ... */
+    // Returns Some(User) if found, or None if not.
 }
 
 if let Some(user) = find_user("ada") {
     greet(&user);
 }
-
-// The absence case is explicit rather than hidden behind a nullable reference.
 ```
 
-The compiler requires the program to account for absence before using the inner value.
-This moves many null-related mistakes from runtime failures to compile-time feedback.
-Chapter 4 explains `Option`, enums, and pattern matching in more detail.
+The compiler forces you to handle the `None` case before you can access the inner value. This prevents null pointer exceptions at runtime. For more details, see Chapter 4.
 
-> **If you come from Java, C#, or JavaScript:** places that would normally require a null
-> check are represented in Rust's type system. TypeScript's strict null checks and Kotlin's
-> nullable types follow a similar principle.
+> **If you come from Java, C#, or JavaScript:**
+> Instead of using null checks, you use Rust's type system to represent optional values. This is similar to strict null checks in TypeScript or nullable types in Kotlin.
 
-## 2.4 Recoverable errors use `Result<T, E>`
+## Result-based error handling
 
-Rust does not use exceptions for ordinary recoverable errors. A fallible function
-usually returns `Result<T, E>`, which is either `Ok(value)` or `Err(error)`. The
-signature therefore records both the possibility and the type of failure.
+Rust does not use exceptions for standard, recoverable errors. Instead, a function that can fail returns a `Result<T, E>` enum, which is either:
+* **`Ok(value)`**: Represents a successful operation.
+* **`Err(error)`**: Represents a failed operation.
 
-The `?` operator propagates errors while keeping the successful path easy to follow:
+Because the potential failure is part of the function signature, you must handle the error explicitly.
+
+To keep your code readable, you can use the `?` operator to propagate errors to the calling function:
 
 ```rust
 fn load(path: &str) -> Result<Config, ConfigError> {
+    // The `?` operator returns the error immediately if `read_to_string` fails.
     let text = std::fs::read_to_string(path)?;
     parse(&text)
 }
 ```
 
-Rust also supports panics, but they are mainly intended for broken assumptions,
-programming errors, and situations from which the program cannot reasonably recover.
-Chapter 5 covers the distinction and the design of useful error types.
+For unrecoverable errors (such as a broken program assumption), Rust uses panics. For more details on error handling and designing custom error types, see Chapter 5.
 
-## 2.5 No class inheritance: structs, implementations, and traits
+## Composition over class inheritance
 
-Rust has structs for data and `impl` blocks for behavior, but it does not have
-traditional class hierarchies or an `extends` keyword. Shared behavior is expressed
-through traits.
+Rust does not have classes, class hierarchies, or an `extends` keyword. Instead, Rust uses:
+* **Structs**: To define the data and fields of a type.
+* **Implementations (`impl` blocks)**: To define the methods for a type.
+* **Traits**: To define shared behavior across different types.
 
-A trait can be implemented for a type when Rust's coherence and orphan rules allow it.
-Polymorphism is achieved through generics with static dispatch or trait objects with
-runtime dispatch when needed.
+Instead of asking what class a type should inherit from, you define what behaviors the type must implement. You can then use traits to achieve polymorphism through static dispatch (resolved at compile time) or dynamic dispatch (resolved at runtime). For more details, see Chapter 6.
 
-Instead of asking, "What base class should this inherit from?", Rust encourages you to
-ask, "What behavior does this type need to provide?" Chapter 6 develops that approach
-and shows how it affects architecture.
+## Explicit type conversions
 
-## 2.6 No implicit numeric conversions or truthiness
-
-Rust does not silently convert one numeric type into another, and conditions must have
-the type `bool`:
+Rust does not perform implicit numeric conversions, and conditions in control flows must evaluate to a boolean (`bool`) type.
 
 ```rust
 let a: i32 = 5;
 
-let b: i64 = a; // Error: expected `i64`, found `i32`.
-let b: i64 = a.into(); // Explicit, lossless conversion.
-let c = a as f64; // Explicit cast; the conversion remains visible.
+// let b: i64 = a; // Compiler error: mismatched types.
+let b: i64 = a.into(); // Lossless conversion.
+let c = a as f64; // Explicit cast.
 
-if a {
-    // Error: `if` requires a `bool`.
-}
-
+// if a { } // Compiler error: expected `bool`, found `i32`.
 if a != 0 {
-    // The intended comparison is explicit.
+    // This is valid because the condition evaluates to a boolean.
 }
 ```
 
-Rust does support carefully defined coercions, such as converting `&String` to `&str`,
-but it avoids broad implicit conversions that could obscure intent or lose information.
-Chapter 6 introduces the standard conversion traits.
+Rust does support automatic conversions in specific, safe scenarios (such as coercing a `&String` reference to a `&str` reference), but it avoids broad implicit conversions to prevent information loss or ambiguity. For more details, see Chapter 6.
 
-## 2.7 Many constructs are expressions
+## Expression-based syntax
 
-Constructs such as `if`, `match`, blocks, and loops that use `break` with a value can
-produce values. This often reduces the need for temporary variables and replaces many
-uses of a ternary operator:
+In Rust, many syntax constructs are expressions that evaluate to a value. This includes `if` blocks, `match` blocks, loops that use `break` with a value, and basic code blocks `{}`.
+
+This expression-based design reduces the need for temporary mutable variables and replaces the need for a separate ternary operator.
 
 ```rust
 let access = match role {
@@ -134,77 +128,68 @@ let access = match role {
 };
 ```
 
-`match` also checks exhaustiveness. When a case is missing, the compiler points to the
-model change that still needs to be handled. Chapter 4 explores this in depth.
+Additionally, the `match` operator requires you to handle every possible case. If you miss a case, the compiler generates an error. For more details, see Chapter 4.
 
-## 2.8 Two main string types, on purpose
+## Two main string types
 
-A common early stumbling block is the distinction between `String` and `&str`. `String`
-owns growable, heap-allocated text, whereas `&str` is a borrowed view into valid UTF-8
-string data. String literals have the type `&'static str`.
+Rust has two primary string types:
+* **`String`**: An owned, growable, and heap-allocated UTF-8 text container.
+* **`&str`**: A borrowed reference (or slice) to a UTF-8 string owned by another variable.
 
-A useful starting rule is to store `String` and accept `&str` in function parameters. A
-`&String` usually coerces to `&str`. Use `.to_string()` or `.to_owned()` when you need
-an owned value, and borrow with `&s` or `.as_str()` when you need a view.
+String literals (such as `"hello"`) have the type `&'static str` because they are stored directly in the compiled binary.
 
-Chapter 3 explains why this distinction follows directly from ownership.
+### Recommended guideline
+A common practice is to store `String` in structs or long-lived variables, and accept `&str` in function parameters. A reference to a `String` (`&String`) automatically converts to `&str`. 
 
-## 2.9 Data races are compile-time errors in safe Rust
+* To convert a `&str` to a `String`, use `.to_string()` or `.to_owned()`.
+* To convert a `String` to a `&str`, borrow it using `&s` or `.as_str()`.
 
-Many languages allow shared mutable state to be accessed without sufficient
-synchronization. The resulting bugs can be intermittent and difficult to reproduce.
+For more details, see Chapter 3.
 
-Safe Rust prevents data races through its ownership, borrowing, and type systems. The
-`Send` and `Sync` traits help express which values can cross thread boundaries or be
-shared between threads safely. You choose a strategy explicitly, such as a mutex, a
-channel, or an atomic type, and that choice appears in the program's types.
+## Safe concurrency
 
-Rust does not prevent every concurrency problem. Deadlocks, starvation, and higher-level
-ordering mistakes remain possible. Chapter 7 explains both the guarantees and their
-limits.
+A data race occurs when two or more threads access the same memory location concurrently, at least one of the accesses is a write, and there is no synchronization. Data races are notoriously difficult to debug because they cause intermittent errors.
 
-## 2.10 The compiler becomes part of the design process
+Safe Rust prevents data races at compile time. The compiler uses the ownership and borrowing rules, along with two core traits, to ensure safe multi-threaded code:
+* **`Send`**: Indicates that a type can transfer ownership safely across thread boundaries.
+* **`Sync`**: Indicates that multiple threads can access a type safely through shared references.
 
-Together, these differences reveal Rust's general character. The language asks important
-design questions early:
+To share mutable data across threads safely, you must explicitly use synchronization types such as `Mutex`, channels, or atomic types. For more details, see Chapter 7.
 
-- Who owns this value?
-- Can this operation fail?
-- Can this value be absent?
-- Is this state mutable or shared across threads?
+## Compile-time design feedback
 
-This front-loaded strictness can slow early experiments, and the compiler may reject
-code that you believe is safe until you learn how to express the relevant relationships
-through ownership and types.
+Rust's strict rules shift your development effort to the beginning of the design process. The compiler asks you to answer critical questions early:
+* Which variable owns this data?
+* Can this operation fail?
+* Is it possible for this value to be absent?
+* Is this data shared or mutated across threads?
 
-In return, many problems—including null dereferences, use-after-free errors, dangling
-references, double frees, data races, ignored recoverable errors, and forgotten enum
-variants—move from runtime incidents to compile-time feedback.
+Answering these questions can slow down your initial prototyping. However, once your program compiles, the type system has already eliminated a wide category of common bugs:
+* Null dereference errors
+* Use-after-free and dangling pointer errors
+* Double-free errors
+* Data races
+* Ignored error results
+* Unhandled enum variants
 
-## 2.11 Translation table
+## Concept translation table
 
-The following table gives rough equivalents to help anchor familiar concepts. The
-analogies are useful starting points, but the linked chapters provide the more precise
-explanation.
+The following table provides rough equivalents to help you connect familiar programming concepts to Rust:
 
-| Concept              | Python / JS                 | Go                          | Java / C#           | Rust                               | Chapter |
-| -------------------- | --------------------------- | --------------------------- | ------------------- | ---------------------------------- | ------- |
-| Absence              | `None` / `null`/`undefined` | `nil`                       | `null`              | `Option<T>`                        | 4       |
-| Failure              | exceptions                  | `(val, err)` returns        | exceptions          | `Result<T, E>` + `?`               | 5       |
-| Interface            | duck typing / protocols     | implicit interfaces         | `interface`         | `trait` with an explicit `impl`    | 6       |
-| Inheritance          | classes                     | struct embedding            | `extends`           | traits and composition             | 6       |
-| Package tool         | pip / npm                   | go mod                      | Maven / NuGet       | Cargo                              | 1, 8    |
-| Concurrency unit     | asyncio / event loop        | goroutine + channel         | threads / Tasks     | threads or Tokio tasks + channels  | 7       |
-| Shared mutable state | conventions and runtime tools | mutexes and race detector | synchronization APIs | types such as `Arc<Mutex<T>>`      | 7       |
-| Memory management    | garbage collection          | garbage collection          | garbage collection  | ownership and deterministic cleanup | 3      |
-| Generic function     | dynamic typing / TS generics | generics                   | generics             | monomorphized generics             | 6       |
+| Concept | Python / JavaScript | Go | Java / C# | Rust | Chapter |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Absence** | `None` / `null` / `undefined` | `nil` | `null` | `Option<T>` | 4 |
+| **Failure** | Exceptions | Multiple return values `(val, err)` | Exceptions | `Result<T, E>` and `?` | 5 |
+| **Interface** | Duck typing or protocols | Implicit interfaces | `interface` | `trait` with explicit `impl` | 6 |
+| **Inheritance** | Class inheritance | Struct embedding | Class inheritance (`extends`) | Traits and composition | 6 |
+| **Package tool** | `pip` or `npm` | `go mod` | `Maven` or `NuGet` | `Cargo` | 1, 8 |
+| **Concurrency** | `asyncio` or event loop | Goroutine and channels | Threads or Tasks | Threads or Tokio tasks with channels | 7 |
+| **Shared state** | Lock objects or libraries | Mutexes | Synchronization APIs | Synchronization types (such as `Arc<Mutex<T>>`) | 7 |
+| **Memory** | Garbage collection | Garbage collection | Garbage collection | Ownership and deterministic cleanup | 3 |
+| **Generics** | Dynamic typing | Generics | Generics | Monomorphized generics | 6 |
 
-## Summary and how to use this map
+## Summary
 
-When a later example feels unexpectedly difficult, return to this chapter and identify
-the underlying difference. Many early problems involve ownership or the distinction
-between `String` and `&str`. They often indicate that a design from another language is
-being copied directly rather than adapted to Rust's model.
+If you encounter difficulties while learning Rust, review this chapter to identify which core difference is causing the issue. Most early compilation issues involve ownership or the distinction between `String` and `&str`. These issues often happen when you try to apply design patterns from garbage-collected languages directly to Rust.
 
-The remaining chapters expand this map, beginning with memory and ownership and then
-moving outward to types, errors, abstractions, concurrency, and project structure.
+The following chapters explore these differences in detail, starting with memory management and ownership in Chapter 3.

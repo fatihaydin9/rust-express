@@ -1,28 +1,36 @@
-# Chapter 8: Projects, Tooling, and Tests
+# Projects, tooling, and testing
 
-The guide now moves beyond single-file examples. This chapter covers modules, crates,
-workspaces, project tooling, and tests. Its central idea is that crate dependencies can
-turn some architectural boundaries into rules checked by the compiler rather than
-conventions shown only in diagrams.
+This chapter explains how to organize, build, and test larger Rust applications. You will learn how to use modules, crates, and workspaces to structure your project. You will also learn how to use standard Rust tools and write fast, deterministic tests using fakes.
 
-## 8.1 Modules: organization within a crate
+By the end of this chapter, you will understand:
+* How to organize code within a single crate using modules and visibility rules.
+* How to use crates as compilation boundaries to enforce architectural rules.
+* How to manage multiple related crates using Cargo workspaces.
+* How to design a layered project layout with enforced dependency boundaries.
+* How to assemble your application components at the composition root.
+* How to use standard Rust formatting, linting, and testing tools.
+* How to write unit tests, integration tests, and doc-tests.
+* How to test business logic using fakes and assertion macros.
 
-Inside one compilation unit, code organizes into **modules** — namespaces with
-visibility rules:
+## Modules
+
+A **module** is a namespace that allows you to organize code within a single crate. Modules also control the visibility (privacy) of your code. By default, all items in a module are private and cannot be accessed from outside the module.
+
+The following example defines a module with different visibility levels:
 
 ```rust
 mod billing {
-    // Visible outside the `billing` module.
+    // This struct is visible outside of the `billing` module.
     pub struct Invoice {
         /* ... */
     }
 
-    // Visible anywhere inside the current crate.
+    // This function is visible anywhere within the current crate.
     pub(crate) fn tax_rate() -> f32 {
         0.20
     }
 
-    // Private to the `billing` module.
+    // This function is private to the `billing` module.
     fn round(value: f32) -> f32 {
         /* ... */
     }
@@ -31,76 +39,71 @@ mod billing {
 use billing::Invoice;
 ```
 
-Module names usually follow the file layout. A `mod billing;` declaration in `main.rs`
-or `lib.rs` loads `src/billing.rs`, or `src/billing/mod.rs` when the module is
-represented by a directory.
+### Module file mapping
+Module structures can match your filesystem structure. When you declare a module with `mod billing;` in `main.rs` or `lib.rs`, Cargo searches for the module code in either:
+* `src/billing.rs`
+* `src/billing/mod.rs` (used when a module contains sub-modules)
 
-The `pub(crate)` visibility level is especially useful: the entire crate may use the
-item, but external crates may not. Prefer it for shared internals, and reserve bare
-`pub` for an intentionally designed public API.
+### Recommended visibility practice
+Use **`pub(crate)`** to share internal helper functions or data types within your crate. Reserve bare **`pub`** only for items that are part of your crate's public API.
 
-## 8.2 Crates: compilation and dependency boundaries
+## Crates
 
-A **crate** is Rust's unit of compilation and distribution. Binary crates contain a
-`src/main.rs` entry point, while library crates expose code through `src/lib.rs`; one
-package may contain both.
+A **crate** is the primary unit of compilation and package distribution in Rust. There are two types of crates:
+* **Binary crates**: Contain a `src/main.rs` file. They compile into an executable binary and contain a `main` function as the entry point.
+* **Library crates**: Contain a `src/lib.rs` file. They expose public functionality to other crates and do not compile into an executable.
 
-The important architectural property is simple: **a crate cannot use a dependency that
-is absent from its `Cargo.toml`.** When the domain crate does not declare `sqlx`,
-importing SQLx there becomes a compile error rather than a convention that reviewers
-must remember.
+A single Cargo package can contain both a library crate and a binary crate.
 
-## 8.3 Workspaces: several crates managed together
+### Architectural boundaries in crates
+A crate cannot use external dependencies unless those dependencies are explicitly listed in its `Cargo.toml` file. This means you can use crate boundaries to enforce architectural rules. For example, if you want to ensure that your core business logic does not depend on a specific database driver, you can place that logic in a separate library crate that omits the database driver from its dependency list. The compiler then enforces this rule automatically.
 
-A **workspace** develops several crates together — one root manifest, one shared
-`Cargo.lock`, one build cache:
+## Workspaces
+
+A **workspace** allows you to manage multiple related crates together in a single repository. All crates in a workspace share a single root manifest, a single `Cargo.lock` file, and a single build directory. This helps prevent dependency version drift and speeds up compilation times.
+
+The following example shows a root `Cargo.toml` file for a workspace:
 
 ```toml
 [workspace]
 members = ["crates/domain", "crates/store-postgres", "crates/server"]
 
-[workspace.dependencies]           # shared dependency versions
+[workspace.dependencies]
 tokio     = { version = "1", features = ["rt-multi-thread", "macros"] }
 sqlx      = { version = "0.8", features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2"
 ```
 
-Members reference them with `tokio = { workspace = true }`. `[workspace.dependencies]`
-reduces version drift by giving workspace members one place to select, audit, and
-upgrade shared dependencies.
-
-## 8.4 A layered layout with enforced dependencies
-
-Combine §8.2 with chapter 6's consumer-owned traits and a layout falls out:
-
+To use a shared dependency in a workspace member's `Cargo.toml` file, reference it like this:
+```toml
+[dependencies]
+tokio = { workspace = true }
 ```
+
+## Layered architecture layout
+
+By combining crate boundaries with consumer-defined traits (see Chapter 6), you can design a highly decoupled, layered architecture:
+
+```text
 myapp/
 └── crates/
-    ├── domain/            # entities, errors, services, and consumer-owned traits
-    │                      #   deps: thiserror, uuid; no sqlx or axum
-    ├── store-postgres/    # implements domain's repository traits
-    │                      #   deps: domain, sqlx
-    └── server/            # HTTP, config, startup — wires everything
-                           #   deps: domain, store-postgres, axum
+    ├── domain/            # Core business logic (entities, services, errors, traits)
+    │                      # Dependencies: thiserror, uuid (no database or web libraries)
+    │
+    ├── store-postgres/    # Database adapter that implements domain traits
+    │                      # Dependencies: domain, sqlx
+    │
+    └── server/            # Application entry point (routing, configurations, startup)
+                           # Dependencies: domain, store-postgres, axum
 ```
 
-The layout encodes one rule: dependency arrows point inward toward the domain. In
-ports-and-adapters terminology, chapter 6's traits are the ports and the storage crates
-are adapters.
+This layout enforces the rule that dependencies must point inward toward the core domain logic:
+* **No database dependencies in the domain**: Because the `domain` crate's `Cargo.toml` omits `sqlx`, developers cannot write database-specific code inside the business logic layer.
+* **No cyclic dependencies**: Cargo does not allow cyclic dependencies between crates. This prevents tight coupling between layers and keeps your codebase easy to maintain.
 
-Rust adds enforcement. Because the domain manifest omits `sqlx`, SQL-specific code
-cannot enter the domain while the project still builds. Cargo also rejects cyclic crate
-dependencies, preventing one common form of architectural erosion at the package level.
+## The composition root
 
-Choose crate boundaries according to why code changes and which dependencies it needs. A
-small application may not benefit from many tiny crates, while a larger domain can
-reasonably be much bigger than each adapter.
-
-## 8.5 The composition root: wiring without a framework
-
-In this design, concrete implementations are assembled in one place: `main`, or a nearby
-`bootstrap` module. This is where the generic services from chapter 6 meet the
-production adapters:
+In a layered design, you assemble your concrete implementations in a single entry point called the **composition root** (typically the `main` function or a startup helper module). This is where you pass concrete adapters to your generic services:
 
 ```rust
 #[tokio::main]
@@ -108,11 +111,13 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     let pool = sqlx::PgPool::connect(&config.database_url).await?;
 
-    // Concrete adapter implementing the domain trait.
+    // Create the concrete database adapter.
     let repository = PostgresOrderRepository::new(pool);
 
-    // The generic service is wired at the composition root.
+    // Wire the generic service with the adapter.
     let orders = OrderService::new(repository);
+    
+    // Set up the API router and start the server.
     let app = api::router(orders);
     let listener = tokio::net::TcpListener::bind(config.addr).await?;
 
@@ -121,59 +126,57 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-No runtime dependency-injection container is required here. The implementation is passed
-as an argument, and the resulting graph is checked by the type system. If the adapter
-drifts out of sync with the trait, the build breaks _here_, naming the missing method.
-Swapping Postgres for an in-memory store is a different argument at this one call site —
-which is exactly how the tests below work.
+### Benefits of manual dependency wiring
+* **Compile-time safety**: Rust does not require complex runtime dependency-injection frameworks. The compiler checks that all arguments match the expected trait interfaces. If an adapter does not implement a required trait method, the project fails to compile at this wiring step.
+* **Simplified testing**: To test the server or services, you can swap the database adapter for a lightweight in-memory fake directly at the call site.
 
-## 8.6 Project tools
+## Developer tools
 
-The following tools are useful defaults for most Rust projects:
+The following Cargo tools are recommended for daily development and continuous integration (CI) workflows:
 
-- **`cargo fmt`** applies Rust's canonical format. Run `cargo fmt --check` in CI.
-- **`cargo clippy`** detects non-idiomatic code and many real bug patterns. A strict CI
-  command is `cargo clippy -- -D warnings`.
-- **`cargo doc --open`** renders `///` comments into browsable API documentation. Code
-  examples in documentation can be compiled and executed as doc-tests by `cargo test`.
-- **`cargo audit`** checks the dependency graph against the Rust security advisory
-  database.
+*   **`cargo fmt`**: Formats your codebase to match standard Rust formatting style rules. Run `cargo fmt --check` in your CI pipeline to verify formatting.
+*   **`cargo clippy`**: Analyzes your code for common mistakes, styling issues, and unidiomatic patterns. Run `cargo clippy -- -D warnings` in your CI pipeline to treat warnings as build errors.
+*   **`cargo doc --open`**: Generates searchable HTML documentation from your code's triple-slash (`///`) comments and opens it in your default browser.
+*   **`cargo audit`**: Scans your dependency graph against the Rust Security Advisory Database to check for known security vulnerabilities.
 
-## 8.7 Three forms of tests
+## Testing in Rust
 
-Rust and Cargo support three common forms of tests without requiring an external test
-runner. **Unit tests** live _inside the file they test_, in a module compiled only for
-testing:
+Rust and Cargo provide built-in support for three primary forms of testing without requiring external test runners.
+
+### 1. Unit tests
+Unit tests verify individual components or functions. They are co-located with the implementation inside the same source file, inside a testing module annotated with `#[cfg(test)]`. This attribute ensures that the test code is excluded from your production builds.
 
 ```rust
-// src/services/order_service.rs, at the bottom of the same file.
+// src/services/order_service.rs
+
+// This module is only compiled during `cargo test`.
 #[cfg(test)]
 mod tests {
-    use super::*; // Tests can access private items in the parent module.
+    use super::*; // Allows tests to access private items in the parent module.
 
     #[test]
     fn totals_are_summed() {
         assert_eq!(total(&[2, 3]), 5);
     }
-
-    #[tokio::test]
-    async fn placing_an_order_stores_it() {
-        /* ... */
-    }
 }
 ```
 
-Co-location keeps tests near the implementation, while `#[cfg(test)]` excludes the test
-module from normal non-test builds. **Integration tests** live in a top-level `tests/`
-directory — each file a separate binary seeing only your _public_ API. **Doc-tests** are
-§8.6's compiled examples. The assertion macros are `assert!`, `assert_eq!`, and — for
-enums with data — `matches!`, which you're about to need.
+### 2. Integration tests
+Integration tests verify that different parts of your library work together. They live in a top-level directory named `tests/` at the root of your crate. Each file in this directory is compiled as a separate binary that can only access the public API of your library.
 
-## 8.8 Testing the domain with a small fake
+### 3. Documentation tests (Doc-tests)
+Any code blocks included in your triple-slash (`///`) documentation comments are compiled and run automatically when you run `cargo test`. This ensures that your documentation examples remain accurate and up-to-date.
 
-The ideas from chapters 5, 6, and 7 now combine in a testable design. `OrderService`
-depends on a trait _we_ defined, so a test double is a small struct — no mocking
-framework, no database, no Docker:
+### Common assertion macros
+* **`assert!`**: Verifies that a boolean condition evaluates to `true`.
+* **`assert_eq!`**: Verifies that two values are equal.
+* **`matches!`**: Verifies that an expression matches a specific pattern (highly useful for checking enum variants with data).
+
+## Testing business logic with fakes
+
+Because your core services depend on consumer-owned traits, you do not need complex mocking frameworks to write unit tests. Instead, you can write small, in-memory **fakes** that implement your traits.
+
+The following example defines a fake database repository for testing:
 
 ```rust
 #[cfg(test)]
@@ -183,10 +186,10 @@ mod tests {
 
     #[derive(Default)]
     struct FakeRepo {
-        // Guarded interior mutability keeps the fake thread-safe.
+        // Use a Mutex to ensure the fake remains thread-safe.
         orders: Mutex<Vec<Order>>,
 
-        // Explicit failure injection for the commit path.
+        // A flag to simulate commit failures.
         fail_commit: bool,
     }
 
@@ -234,6 +237,7 @@ mod tests {
             .await
             .unwrap_err();
 
+        // Use `matches!` to verify the exact error variant and its fields.
         assert!(matches!(
             error,
             OrderError::VersionConflict {
@@ -246,28 +250,18 @@ mod tests {
 }
 ```
 
-This test exercises business logic without starting external infrastructure. It is
-small, deterministic, and suitable for parallel test execution. `type Tx = ()` removes
-transaction mechanics from the fake, while `fail_commit` makes a failure path easy to
-reproduce.
-
-The `matches!` assertion checks both the error variant and its important fields. The
-test therefore verifies the failure contract that an API or UI will depend on, not
-merely that “some error” occurred.
-
-Two closing calibrations. A modest band of **integration tests against real Postgres**
-(in a container) still belongs in the store crate — the fake proves your logic, not your
-SQL. When business logic is difficult to test without infrastructure, review whether a
-focused trait boundary is missing before introducing a larger mocking framework.
+### Advantages of using fakes
+* **Speed and predictability**: These tests run entirely in memory, making them extremely fast and deterministic. They do not depend on external databases or networks.
+* **Clear error assertions**: By using the `matches!` macro, you can verify both the exact error variant and the specific data fields returned. This ensures your code returns meaningful errors.
+* **Separation of concerns**: Use in-memory fakes to verify your core business logic, and use a separate, small set of integration tests to verify database-specific queries (such as SQL statements running against an actual database container).
 
 ## Summary
 
-Modules organize code within a crate, while crates form dependency boundaries that the
-compiler can enforce. Workspaces provide one lockfile, build cache, and shared
-dependency policy. A layered crate layout can turn “the domain does not know the
-database” into a build rule rather than a guideline.
-
-Wire concrete implementations once at the composition root, and use formatting, linting,
-documentation tests, and dependency audits as CI gates. Consumer-owned traits then make
-the domain fast to test with small fakes and precise `matches!` assertions. The final
-chapter assembles these ideas into one service design.
+This chapter discussed project structure, tooling, and testing in Rust:
+* **Modules** organize code inside a crate, while **crates** form dependency and compilation boundaries.
+* **Workspaces** group multiple related crates in a single repository with shared dependencies and lockfiles.
+* **A layered project layout** uses crate boundaries to enforce clean dependencies that point inward toward the core domain logic.
+* **The composition root** manually wires adapters and services together at program startup, providing compile-time safety without a runtime framework.
+* **Cargo tools** like `cargo fmt`, `cargo clippy`, and `cargo audit` enforce style rules and detect security issues.
+* **Rust tests** support co-located unit tests, integration tests, and doc-tests.
+* **In-memory fakes** allow you to test complex business logic quickly and deterministically without external infrastructure.

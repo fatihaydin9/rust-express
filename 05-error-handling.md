@@ -1,100 +1,117 @@
-# Chapter 5: Error Handling
+# Error handling
 
-Rust does not use exceptions for ordinary recoverable failures. Failure is a **return
-value**, which makes error handling part of the data model rather than an invisible
-runtime mechanism. This chapter begins with `Result` and `?`, then moves to error types
-that remain useful during production incidents and the common roles of `thiserror` and
-`anyhow`.
+Rust does not use exceptions to handle errors. Instead, Rust represents errors as ordinary values. This makes error handling an explicit part of your application's data model and control flow.
 
-## 5.1 Two kinds of failure, two tools
+By the end of this chapter, you will understand:
+* The difference between unrecoverable panics and recoverable errors.
+* How to use the `Result` enum to represent operations that can fail.
+* How to use the `?` operator to propagate errors cleanly.
+* How to design informative and actionable custom error types.
+* How to use the `thiserror` crate to implement standard error traits automatically.
+* How to preserve the original error cause chain across application layers.
+* When to use `thiserror` for structured library errors and `anyhow` for application entry points.
 
-Rust distinguishes between broken assumptions and failures that callers may reasonably
-handle. A **panic** usually represents an internal invariant violation or programming
-error. Depending on the build configuration, it may unwind the current thread or abort
-the process. Out-of-bounds indexing is one example.
+## Panics and recoverable errors
 
-Conditions such as a missing file, a network timeout, malformed input, or a version
-conflict are expected parts of many programs. They are normally represented as typed
-return values. A useful question is: _could the caller reasonably respond to this
-condition?_ If so, return it as an error value rather than panicking.
+Rust distinguishes between two categories of failure: unrecoverable errors (panics) and recoverable errors.
 
-> **If you come from Go:** `Result` serves a role similar to a `(value, err)` return, while
-> the type system and the `?` operator provide standard handling and propagation. **If you
-> come from Java, Python, or JavaScript:** recoverable failure is visible in the return type
-> rather than being communicated through exceptions.
+### Unrecoverable errors (Panics)
+A **panic** represents a bug or an invariant violation in your code.
+* **When it occurs**: For example, when you access a vector index that is out of bounds or divide an integer by zero.
+* **What happens**: The program displays an error message, unwinds the stack to clean up resources, and terminates the execution.
+* **When to use**: Use panics only for logic errors and broken assumptions from which your program cannot recover.
 
-## 5.2 `Result<T, E>`: failure you can hold
+### Recoverable errors
+A recoverable error represents an expected failure scenario that your application can handle.
+* **When it occurs**: For example, when a file is missing, a network request times out, or user input is malformed.
+* **What happens**: The function returns a value that represents the failure.
+* **When to use**: If the calling function can reasonably respond to the failure (for example, by prompting the user for a different filename or retrying a request), you must return a recoverable error value.
 
-`Result` is an ordinary generic enum from the standard library:
+> **If you come from Go:**
+> The `Result` type works similarly to returning a value and an error tuple `(value, err)`. However, Rust provides compiler checks and a dedicated propagation operator (`?`) to streamline the workflow.
+>
+> **If you come from Java, Python, or JavaScript:**
+> In Rust, recoverable errors are visible in the function signatures. You do not use exceptions or try-catch blocks.
+
+## Recoverable errors with `Result<T, E>`
+
+The `Result<T, E>` type is a standard library enum defined as follows:
 
 ```rust
 enum Result<T, E> {
-    Ok(T),  // Success, carrying the value.
-    Err(E), // Failure, carrying the error.
+    Ok(T),  // Represents success and contains the output value of type `T`.
+    Err(E), // Represents failure and contains the error details of type `E`.
 }
 ```
+
+Because `Result` is an enum, you can use pattern matching or standard combinators to handle its variants explicitly:
 
 ```rust
 fn read_config(path: &str) -> Result<Config, ConfigError> {
-    /* ... */
+    // ...
 }
 
-match read_config("app.toml") {
-    Ok(config) => start(config),
-    Err(error) => eprintln!("could not load config: {error}"),
+fn main() {
+    match read_config("app.toml") {
+        Ok(config) => start(config),
+        Err(error) => eprintln!("Failed to load configuration: {error}"),
+    }
 }
 ```
 
-Everything chapter 4 taught about enums applies: exhaustive matching, combinators
-(`.map`, `.unwrap_or_else`, `.ok()` to convert into an `Option`, and `opt.ok_or(err)`
-the other way). `.unwrap()` / `.expect("why this can't fail")` exist here too, with the
-same policy: fine in tests and examples, a smell in libraries.
+### Common `Result` methods and combinators
+Instead of writing a full `match` statement, you can use built-in combinators:
+* **`.map`**: Transforms the successful value inside `Ok` if present.
+* **`.unwrap_or_else`**: Returns the successful value, or evaluates a fallback closure if the variant is `Err`.
+* **`.ok()`**: Converts a `Result<T, E>` into an `Option<T>` (discards the error details).
+* **`Option::ok_or`**: Converts an `Option<T>` into a `Result<T, E>` by providing a fallback error.
 
-## 5.3 `?`: propagation without the pyramid
+> **Best practice**:
+> Avoid using `.unwrap()` or `.expect()` in library APIs. These methods panic on failure and should be reserved for unit tests, example code, or when a code invariant guarantees success.
 
-The `?` operator provides a concise form of early error propagation. The following two
-functions have the same behavior:
+## Error propagation with the `?` operator
+
+The `?` operator provides a clean way to return errors early to the calling function. The following two examples perform the exact same steps:
 
 ```rust
-// Expanded form.
+// Long-form manual propagation
 fn load_expanded(path: &str) -> Result<Config, ConfigError> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(error.into()), // Returns early on error
     };
 
     parse(&text)
 }
 
-// Idiomatic form with `?`.
+// Idiomatic propagation using the `?` operator
 fn load(path: &str) -> Result<Config, ConfigError> {
-    let text = std::fs::read_to_string(path)?;
+    let text = std::fs::read_to_string(path)?; // Returns early on error
     parse(&text)
 }
 ```
 
-The `?` operator performs three steps. On `Ok`, it extracts the value and continues. On
-`Err`, it returns early. During that return, it can convert the error into the
-function's error type when a suitable `From` implementation exists.
+### Steps performed by the `?` operator
+When you append `?` to a `Result` value, Rust performs the following actions:
+1. **Unwraps `Ok`**: If the result is `Ok(value)`, the program extracts the inner value and continues execution.
+2. **Returns early on `Err`**: If the result is `Err(error)`, the program immediately stops execution and returns the error to the caller.
+3. **Converts error types automatically**: During the early return, the `?` operator automatically converts the error value into the caller's expected error type, if a valid `From` trait implementation exists.
 
-The happy path therefore remains linear, while every possible propagation point stays
-visible in the source. Errors can travel upward through several layers, but each hop is
-explicit and typed.
+This design keeps the successful path linear and readable while ensuring that every potential error propagation point is marked clearly.
 
-Note: `?` works inside any function that returns `Result` (or `Option`) — including
-`main`, which may be declared `fn main() -> Result<(), anyhow::Error>` so scripts get
-`?` for free.
+## Designing effective error enums
 
-## 5.4 Designing the error type, three drafts
+Because errors are ordinary values, you must design their structure to support robust handling. The following stages demonstrate how to design an effective error type:
 
-Because errors are values, their structure is part of the program's design. The
-following example develops an error type in three stages.
+### Stage 1: String-based errors (Not recommended)
+```rust
+fn load_document(id: DocumentId) -> Result<Document, String> {
+    // ...
+}
+```
+String-based errors are quick to write but difficult to handle. The calling function cannot easily analyze or branch on text messages, leaving it unable to programmatically recover.
 
-**Draft 1 — a string error:** `Result<Doc, String>`. This is easy to create, but callers
-cannot reliably branch on prose and can usually do little more than display or log it.
-
-**Draft 2 — name the cases.** An enum gives each failure a stable identity:
-
+### Stage 2: Basic enums (Partially recommended)
 ```rust
 enum DocumentError {
     NotFound,
@@ -102,19 +119,18 @@ enum DocumentError {
     VersionConflict,
 }
 ```
+An enum allows the caller to match variants explicitly. However, this structure lacks necessary context. If a version conflict occurs, the caller does not know which version is currently active or who made the modification.
 
-Callers can match now. But put yourself at the _receiving_ end of `VersionConflict`
-(optimistic locking: someone saved before you). What do you tell the user? Which version
-exists now? Who changed it? The error does not contain that context, so the handler may
-need another query and the information may no longer be available.
-
-**Draft 3 — the principle: each variant carries what its handler needs to act.** The
-information was in hand at the failure site. Don't discard it there:
+### Stage 3: Context-rich enums (Highly recommended)
+Include specific, actionable fields in your enum variants so that callers can respond programmatically:
 
 ```rust
 pub enum DocumentError {
     NotFound(DocumentId),
-    PermissionDenied { doc: DocumentId, user: UserId },
+    PermissionDenied { 
+        doc: DocumentId, 
+        user: UserId 
+    },
     VersionConflict {
         expected: i32,
         actual: i32,
@@ -124,23 +140,17 @@ pub enum DocumentError {
 }
 ```
 
-The richer variant gives each handler enough information to act. A UI can explain who
-changed the document and when, a synchronization client can choose between retrying and
-merging, and a log entry can describe the incident without another query. Chapter 4's
-newtype IDs also remain intact inside the error.
+This context-rich structure provides several benefits:
+* **Actionable feedback**: Your user interface can explain precisely who changed the document and when.
+* **Programmatic recovery**: Synchronization clients can inspect the version fields to determine whether to retry or merge changes.
+* **Detailed diagnostics**: System logs can record full error attributes without needing to run separate database queries.
 
-This habit—placing actionable context in each variant—is one of the clearest differences
-between weak and strong error designs.
+### Architectural guideline
+Define one custom error enum per module or service layer. An application-wide error enum is often too broad, while a separate enum for every single function introduces unnecessary complexity.
 
-A practical default is one error enum per module or service, expressed at that layer's
-level of abstraction. One application-wide enum often becomes too broad, while a
-separate enum for every function usually adds unnecessary ceremony.
+## Implementing errors with `thiserror`
 
-## 5.5 `thiserror`: the boilerplate, derived
-
-Errors should print nicely (`Display`) and integrate with the ecosystem
-(`std::error::Error`). Writing that by hand is boilerplate; the standard tool is the
-`thiserror` crate:
+All custom error types should implement the standard library `std::fmt::Display` and `std::error::Error` traits. Implementing these traits manually requires significant boilerplate code. You can use the `thiserror` crate to generate these implementations automatically:
 
 ```rust
 #[derive(Debug, thiserror::Error)]
@@ -150,7 +160,7 @@ pub enum DocumentError {
 
     #[error(
         "version conflict: expected v{expected}, found v{actual} \
-         (by {modified_by} at {modified_at})"
+         (modified by {modified_by} at {modified_at})"
     )]
     VersionConflict {
         expected: i32,
@@ -164,51 +174,37 @@ pub enum DocumentError {
 }
 ```
 
-Each `#[error("…")]` is the human-readable message with the variant's fields
-interpolated. The crate derives the standard error traits while leaving the variants and
-their meaning under your control.
+The `#[error("...")]` attribute defines the user-facing format string, interpolating the variant's fields automatically. The crate derives the required traits while keeping your custom error variants clean and structured.
 
-## 5.6 Wrapping causes: preserve the error chain
+## Preserving the error chain
 
-The last variant answers the layered-system question: _what do I do with errors from the
-layer below me?_ A common but lossy approach is to convert the lower-level error into a
-string:
+In layered applications, you must determine how to handle errors returned from lower-level layers (such as a database).
 
+### Lossy conversion (Not recommended)
+Avoid converting underlying errors into plain strings:
 ```rust
 #[error("storage failure: {0}")]
-Store(String), // The original error type and source chain are lost.
+Store(String), // This discards the original error type.
 ```
+Converting to a string discards the underlying error type, preventing callers from matching on it. It also breaks the error source chain used by diagnostics tools.
 
-Converting the underlying error to a `String` discards useful structure. The original
-**type** is no longer available for matching, and the **source chain** used by error
-reporters is also lost:
-
-```text
-storage failure
-├─ caused by: connection reset by peer
-└─ caused by: os error 104
-```
-
-Store the original error instead:
+### Structured wrapping (Recommended)
+Store the original error type directly in your variant using the `#[from]` or `#[source]` attributes:
 
 ```rust
 #[error("storage failure")]
 Store(#[from] sqlx::Error),
 ```
 
-`#[from]` stores the original error without flattening it and preserves the source
-chain. It also generates the `From` conversion that allows `?` to cross the layer
-boundary automatically.
+The `#[from]` attribute:
+* Preserves the full error type and its underlying cause chain.
+* Generates a `From` trait implementation, allowing the `?` operator to convert the lower-level error to your custom error type automatically.
 
-Treat the cause chain as diagnostic evidence: preserve the original error rather than
-paraphrasing it into a string. When automatic conversion is not appropriate, mark the
-underlying field with `#[source]` to preserve the same relationship.
-
-At the outermost boundary, map errors _once_, exhaustively — for example, domain error →
-HTTP status:
+### Mapping errors at boundaries
+At the outer boundary of your system (such as an HTTP routing handler), map your custom domain errors to external representations (such as HTTP status codes) exhaustively:
 
 ```rust
-match e {
+match error {
     DocumentError::NotFound(_)             => 404,
     DocumentError::PermissionDenied { .. } => 403,
     DocumentError::VersionConflict { .. }  => 409,
@@ -216,42 +212,38 @@ match e {
 }
 ```
 
-When a new variant is added, this exhaustive match identifies the boundary mapping that
-still needs a status code.
+Exhaustive matches ensure that if you add a new error variant, the compiler forces you to define its corresponding boundary mapping code.
 
-## 5.7 `anyhow`: for the edges
+## Structured errors vs. application reporting
 
-One ecosystem convention separates typed internal errors from application-level
-reporting. When another piece of code consumes an error, it usually needs a concrete
-enum so it can branch on variants. When the final consumer is a human reading CLI output
-or a top-level log, `anyhow` offers a flexible error type with convenient context and
-little ceremony:
+Rust applications commonly use different error handling tools depending on where the error is consumed:
+
+* **In libraries and domain layers**: Use **`thiserror`** to define typed, structured enums. Callers of your library need distinct variants so they can match on them and recover programmatically.
+* **At application boundaries and entry points**: Use **`anyhow`** to handle errors. Entry points (such as the `main` function or command-line parsers) usually focus on presenting readable reports and diagnostic context to humans, rather than recovering programmatically.
+
+The following example demonstrates using `anyhow` at the application entry point to add diagnostic context:
 
 ```rust
 use anyhow::Context;
 
 fn main() -> anyhow::Result<()> {
-    let config = load_config().context("while loading configuration")?;
-    let database = connect(&config.db_url).context("while connecting to database")?;
+    let config = load_config().context("failed to load application configuration")?;
+    let database = connect(&config.db_url).context("failed to connect to database")?;
 
     run(config, database)
 }
 ```
 
-A common ecosystem convention is to use **`thiserror` for structured library and domain
-errors, and `anyhow` at application boundaries where a human will consume the report.**
-
-> **Common mistake:** exposing `anyhow::Error` from a library API whose callers need to match
-> specific cases, or defining a large custom error hierarchy for a small application script
-> that only needs contextual reporting.
+### Guidelines for anyhow vs. thiserror
+* Do not expose `anyhow::Error` in public library APIs where callers must match on specific failure variants.
+* Do not design complex custom error hierarchies for small scripts or simple applications that only require high-level, human-readable logging. Use `anyhow` instead.
 
 ## Summary
 
-Failure is data. It appears in signatures through `Result`, propagates explicitly
-through `?`, and is modeled with variants that carry the information handlers need.
-Preserve underlying causes with `#[from]` rather than reducing them to strings, and map
-domain errors once at the outer boundary.
-
-Use `thiserror` where code needs structured errors and allow `anyhow` at human-facing
-application edges. The next chapter introduces traits, the mechanism that carries these
-contracts across abstraction boundaries.
+This chapter discussed error handling in Rust:
+* **Recoverable errors** are represented explicitly as values using the `Result<T, E>` enum, while **panics** represent unrecoverable invariant violations.
+* **The `?` operator** simplifies error propagation by automatically returning errors early and converting types using the `From` trait.
+* **Effective error enums** store detailed, context-rich fields in each variant to support programmatic error recovery and UI messaging.
+* **The `thiserror` crate** eliminates trait boilerplate by deriving standard error traits automatically using format string attributes.
+* **The `#[from]` attribute** wraps lower-level errors to preserve the complete cause chain for diagnostics.
+* **Use `thiserror`** to declare structured error enums in domain layers and libraries, and use **`anyhow`** to format human-readable error reports at your application's entry boundaries.

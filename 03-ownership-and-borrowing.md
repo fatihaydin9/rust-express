@@ -1,60 +1,79 @@
-# Chapter 3: Ownership and Borrowing
+# Ownership and borrowing
 
-This chapter introduces the model that shapes much of Rust programming. Work through the
-examples slowly and read each compiler message to the end. The basic rules are compact,
-but they become useful only when ownership and borrowing start to feel natural.
+This chapter introduces ownership and borrowing, which are the core concepts that define how Rust manages memory. 
 
-## 3.1 One picture of memory
+To write efficient and safe Rust code, you must understand these concepts. As you read this chapter, examine the code examples and error messages to understand how the Rust compiler enforces these rules.
 
-A running program commonly uses both stack and heap storage. The **stack** is well
-suited to fixed-size local values and bookkeeping such as pointers and lengths. Its
-storage is tied to function calls and is reclaimed automatically as those calls return.
+## Stack and heap memory
 
-The **heap** is used for allocations whose size or lifetime is determined at runtime,
-such as user-entered text or a growable list. Those allocations need a clear rule for
-when their resources can be released. Ownership provides that rule in Rust.
+A running program uses two parts of memory to store data: the stack and the heap.
 
-Concretely: `let s = String::from("hello");` creates the bytes `h e l l o` on the heap,
-and on the stack a small handle (pointer + length + capacity). "The string" means both
-parts.
+### The stack
+The stack stores data with a fixed, known size.
+* **Characteristics**: Fast allocation and retrieval.
+* **Lifetime**: Tied to the execution scope of a function. When a function returns, the program automatically cleans up the stack memory for that function.
+* **Stored items**: Primitive types (such as integers and booleans), pointers, and local variables.
 
-## 3.2 The three rules of ownership
+### The heap
+The heap stores data whose size or lifetime can change at runtime.
+* **Characteristics**: Slower allocation than the stack because the operating system must find an empty space of memory.
+* **Lifetime**: Determined by the ownership rules of the program.
+* **Stored items**: Dynamic data, such as a growable list (`Vec`) or user-input text (`String`).
 
-1. Every value has exactly **one owner** (a variable, a struct field, a slot in a
-   collection).
-2. When the owner goes **out of scope**, the value is **dropped**. Its destructor runs
-   and any owned resources are released at that point.
-3. Ownership can **move** to a new owner; the old one becomes invalid.
+### Memory representation of a `String`
+When you write `let s = String::from("hello");`, Rust allocates memory in two places:
+1. **On the heap**: The actual characters `h e l l o`.
+2. **On the stack**: A metadata handle that contains:
+   * A pointer to the heap memory.
+   * The length of the string.
+   * The capacity of the string.
 
-Rule 2 in action:
+Together, the stack handle and the heap data represent the string.
+
+## The three rules of ownership
+
+Rust manages memory using a set of ownership rules. The compiler checks these rules when you build your program.
+
+The three rules of ownership are:
+1. Every value in Rust has a variable called its **owner**.
+2. A value can have only **one owner** at a time.
+3. When the owner goes **out of scope**, Rust automatically drops the value and releases its memory.
+
+### Scope and resource cleanup (RAII)
+Consider the following example:
 
 ```rust
 {
-    // `s` owns the heap allocation.
+    // The variable `s` owns the heap allocation.
     let s = String::from("hello");
     println!("{s}");
-} // `s` leaves scope, is dropped, and releases the allocation.
+} // `s` goes out of scope here. Rust drops `s` and releases the heap memory.
 ```
 
-There is no explicit `free()` call and no garbage collector. The compiler knows where
-the owner leaves scope and inserts cleanup at that point.
+In Rust, you do not need to call a `free` function or use a garbage collector. The compiler determines where a variable goes out of scope and automatically inserts code to clean up the resource.
 
-This pattern is called RAII: resource cleanup is tied to scope. It applies to more than
-memory. A `File` closes when dropped, a database connection returns to its pool, and a
-lock is released automatically. This reduces the number of places where cleanup can be
-forgotten because resource release follows scope and ownership.
+This pattern is known as **Resource Acquisition Is Initialization (RAII)**. In Rust, RAII applies to all resources:
+* **Files**: A `File` handle closes when it goes out of scope.
+* **Database connections**: A connection returns to the connection pool when dropped.
+* **Mutex locks**: A lock releases automatically when the lock guard goes out of scope.
 
-## 3.3 Why assignment moves
+## Assignment and move semantics
 
-What should `let b = a;` do when `a` is a `String`?
+In many programming languages, assigning one variable to another copies a reference or pointer. In Rust, assigning a value to another variable **moves** the ownership of that value.
 
-Copying only the handle, as a reference-oriented language might, would leave two
-apparent owners pointing at one allocation. Both could then try to release it, producing
-a double free. Copying the entire heap allocation would be safe, but an ordinary `=`
-might silently duplicate a very large value.
+### Why Rust moves data
+Consider this example:
+```rust
+let a = String::from("hello");
+let b = a;
+```
 
-Rust chooses a third option: assignment **moves** ownership. After `let b = a;`, `b`
-owns the value and `a` is no longer valid:
+If Rust only copied the stack handle, both `a` and `b` would point to the same heap data. When `a` and `b` go out of scope, both would try to release the same memory. This is a critical security bug called a **double-free error**.
+
+To prevent this issue, Rust makes `a` invalid as soon as you assign it to `b`. Ownership of the data moves from `a` to `b`.
+
+### Move error example
+If you try to use `a` after moving it, the compiler produces an error:
 
 ```rust
 let a = String::from("hello");
@@ -69,104 +88,119 @@ error[E0382]: borrow of moved value: `a`
   |             - value moved here
 3 |     println!("{a}");
   |                ^ value borrowed here after move
-  |
-help: consider cloning the value if the performance cost is acceptable
 ```
 
-Because only the current owner performs cleanup, this particular double-free pattern is
-prevented in safe Rust.
+### Deep copying with `clone`
+If you need to duplicate the heap data so that both variables remain valid, use the `clone` method:
 
-When two independent strings are needed, use `let b = a.clone();`. The allocation and
-copy are explicit, which makes their cost visible in the source and easier to notice
-during review.
+```rust
+let a = String::from("hello");
+let b = a.clone(); // Deep copies the heap data.
+println!("{a}");   // This is valid.
+```
 
-## 3.4 `Copy` types
+Cloning allocates new heap memory, which has a performance cost. Using `clone` makes this cost explicit in your source code.
+
+## Copy types
+
+Some types do not move on assignment. Instead, they are duplicated automatically.
 
 ```rust
 let x = 5;
 let y = x;
-
-println!("{x}"); // Valid because `i32` implements `Copy`.
+println!("{x}"); // This is valid.
 ```
 
-Why is there no error here? An `i32` has a small, fixed-size representation and does not
-own a resource that needs special cleanup. Types with this behavior can implement the
-`Copy` marker, so assignment duplicates the value instead of invalidating the original.
+This code works because `i32` (an integer) implements the `Copy` trait. Types that implement `Copy` have a small, fixed size on the stack and do not own resources on the heap. Assigning these types performs a bitwise copy of the value on the stack.
 
-Primitive numeric types, `bool`, `char`, and tuples or arrays made entirely from `Copy`
-types are common examples. Types that manage heap allocations or other resources, such
-as `String`, `Vec`, and `File`, generally move instead.
+### Common `Copy` types
+The following types implement the `Copy` trait:
+* All integer types (such as `i32`, `u64`).
+* All floating-point types (such as `f64`).
+* The boolean type (`bool`).
+* The character type (`char`).
+* Tuples and arrays, if they contain only types that implement `Copy`.
 
-## 3.5 Functions move too
+Types that manage heap resources, such as `String` and `Vec`, do not implement `Copy`. These types use move semantics.
 
-Passing an argument is an assignment; so is returning:
+## Functions and ownership
+
+Passing a value to a function moves ownership of that value to the function parameter. Returning a value from a function passes ownership to the caller.
 
 ```rust
 fn shout(s: String) -> String {
-    // The function owns `s` and returns a new owned string.
-    s.to_uppercase()
+    s.to_uppercase() // Ownership of `s` is returned to the caller.
 }
 
-let name = String::from("ada");
-let loud = shout(name);
+fn main() {
+    let name = String::from("ada");
+    let loud = shout(name); // Ownership of `name` moves into the `shout` function.
 
-// Error: ownership of `name` moved into `shout`.
-// println!("{name}");
+    // This is invalid because `name` no longer owns the string.
+    // println!("{name}");
+}
 ```
 
-Returning ownership can be useful, but doing it for every read-only function would make
-APIs awkward. References allow a function to use a value without taking ownership of it.
+To avoid constantly passing and returning ownership, Rust uses references.
 
-## 3.6 Borrowing: `&` to read, `&mut` to write
+## References and borrowing
 
-A **reference** lends access without transferring ownership. `&value` creates one; a
-parameter of type `&str` says "I only need to read this text":
+A **reference** allows you to access a value without taking ownership of it. Creating a reference is called **borrowing**.
+
+### Shared references (`&T`)
+A shared reference allows you to read a value but not modify it. You create a shared reference by prefixing the variable with an ampersand (`&`).
 
 ```rust
 fn measure(s: &str) -> usize {
-    // The function borrows the string instead of owning it.
-    s.len()
+    s.len() // Accesses the value without owning it.
 }
 
-let name = String::from("ada lovelace");
-let n = measure(&name);
+fn main() {
+    let name = String::from("ada lovelace");
+    let n = measure(&name); // Passes a shared reference.
 
-// `name` remains valid because no ownership transfer occurred.
-println!("{name}: {n} chars");
+    println!("{name}: {n} chars"); // `name` is still valid.
+}
 ```
 
-To lend _with permission to modify_, both sides say so explicitly:
+### Mutable references (`&mut T`)
+A mutable reference allows you to modify the borrowed value. To create a mutable reference, both the variable and the reference must use the `mut` keyword.
 
 ```rust
 fn add_signature(s: &mut String) {
     s.push_str(" - Ada");
 }
 
-let mut letter = String::from("Dear reader,");
-add_signature(&mut letter);
+fn main() {
+    let mut letter = String::from("Dear reader,");
+    add_signature(&mut letter); // Passes a mutable reference.
+}
 ```
 
-Ordinary safe references come in two forms: `&T` provides shared read access, while
-`&mut T` provides exclusive mutable access. Their relationship is captured by the
-central borrowing rule.
+## The borrowing rule
 
-## 3.7 The central borrowing rule
+Rust enforces one central rule for borrowing to prevent data race conditions:
 
-> **At a given time, a value can have any number of shared `&T` references or one
-> exclusive `&mut T` reference, but not both.**
+> **At any given time, you can have either:**
+> * **Any number of shared references (`&T`) to a value.**
+> * **Exactly one mutable reference (`&mut T`) to a value.**
+>
+> **You cannot have both at the same time.**
 
-This can be summarized as multiple readers or one writer. Much of Rust's safe borrowing
-behavior follows from this rule. The following example shows why the restriction
-matters:
+This rule ensures that data cannot change while other parts of the program are reading it.
+
+### Borrowing conflict example
+The following example shows how the compiler enforces this rule:
 
 ```rust
 let mut items = vec![1, 2, 3];
 
-// Shared borrow into the vector's current storage.
+// Shared reference created here.
 let first = &items[0];
 
-// Error: `push` needs an exclusive mutable borrow of `items`.
+// Compiler error: `push` requires a mutable reference.
 items.push(4);
+
 println!("{first}");
 ```
 
@@ -181,46 +215,45 @@ error[E0502]: cannot borrow `items` as mutable because it is also borrowed as im
   |                ----- immutable borrow later used here
 ```
 
-The danger is concrete. `push` may reallocate the vector and move its elements to a
-larger memory block, which would leave `first` pointing at released storage. C++ exposes
-this as iterator invalidation, while some managed languages detect related cases only at
-runtime. Rust rejects the shape before the program runs.
+If the compiler allowed `push` while `first` was active, the vector might reallocate its heap storage to fit the new element. This reallocation would make the pointer in `first` point to invalid memory, causing undefined behavior.
 
-The borrowing rule addresses a concrete safety problem. Many memory-safety failures
-reduce to mutating data while another part of the program still reads it.
+### Non-lexical lifetimes (NLL)
+The Rust compiler tracks references from where they are created to their **last use**, rather than to the end of the enclosing block. This is called a non-lexical lifetime.
 
-Note the last line of the error: a borrow is tracked to its **last use**, not to the end
-of scope. Move the `println!` above the `push` and the program compiles — borrows end as
-early as possible. This non-lexical lifetime behavior keeps a borrow active only for as
-long as it is used.
+If you move the print statement above the mutation, the code compiles successfully:
 
-> **Try it:** do that reordering. Then try holding two `&mut` to the same vector at once,
-> and read that error too.
+```rust
+let mut items = vec![1, 2, 3];
+let first = &items[0]; // Shared reference starts.
+println!("{first}");   // Shared reference ends here (last use).
 
-## 3.8 Lifetimes: references must not outlive their owners
+items.push(4);         // This is now valid.
+```
 
-The next rule prevents a reference from remaining valid after the value it points to has
-been dropped.
+## Lifetimes
+
+A **lifetime** is the scope for which a reference remains valid. The compiler checks lifetimes to ensure that a reference never outlives the data it points to.
+
+### Invalid reference example
+Consider this example where a reference outlives its data:
 
 ```rust
 let r;
 {
     let x = 5;
     r = &x;
-} // `x` is dropped here while `r` still points to it.
+} // `x` is dropped here, but `r` still points to its memory location.
 
 println!("{r}");
 ```
 
+The compiler rejects this code because `x` does not live as long as `r`:
 ```text
 error[E0597]: `x` does not live long enough
 ```
 
-The span during which a reference is valid is its **lifetime**. A reference cannot
-outlive the value it refers to, and the compiler checks this relationship throughout the
-program. Most lifetimes are inferred. When a function signature relates several
-references in a way the compiler cannot infer on its own, the relationship is written
-explicitly:
+### Lifetime annotations in function signatures
+Most lifetimes are inferred by the compiler automatically. However, when a function accepts multiple references and returns a reference, you must sometimes specify the relationship between their lifetimes explicitly.
 
 ```rust
 fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
@@ -232,85 +265,60 @@ fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
 }
 ```
 
-Read `'a` as a label for some span of validity. The signature says: given two references
-that are valid over a shared span, the function returns a reference valid over that same
-span.
+The `'a` syntax is a lifetime annotation. In this signature, the annotations specify that the returned reference lives at least as long as the shortest lifetime of the inputs `x` and `y`.
 
-Three facts keep lifetime annotations in perspective. They do not extend a value's life;
-they only describe relationships that already exist. Most signatures need no explicit
-annotations because of lifetime elision. Finally, adding more `'a` labels rarely fixes a
-design problem: ask whether the returned value should be a reference at all or should
-own its data.
+Lifetime annotations do not change how long a value lives. Instead, they describe existing lifetime relationships so the compiler can verify memory safety.
 
-## 3.9 `String` vs `&str` : ownership applied to text
+## Strings: `String` vs `&str`
 
-The distinction between `String` and `&str` is ownership applied to text. `String` is
-the
-**owned** string: heap-allocated, growable, freed when its owner drops. `&str` (say "string
-slice") is a **borrowed view**: pointer + length into string data owned by someone else.
-String literals have the type `&'static str`; their data is stored with the program and
-is available for its entire execution.
+The difference between `String` and `&str` is a practical application of ownership and borrowing.
 
-The following rules are useful starting points:
+* **`String`**: An owned, heap-allocated string that is growable and modifiable.
+* **`&str`**: An immutable, borrowed view (or slice) into string data owned by another variable.
+
+### Guidelines for strings
+* Use `String` when you need to store text in structs or transfer ownership of the data.
+* Use `&str` as a function parameter type so the function can accept both `String` references and string literals.
 
 ```rust
 fn print_label(label: &str) {
     println!("[{label}]");
 }
 
-// Store owned strings in structs and long-lived values.
-let owned = String::from("inventory");
-
-// Accept borrowed string slices in parameters.
-print_label(&owned); // `&String` coerces to `&str`.
-print_label("literal"); // String literals already have type `&str`.
-
-let owned_copy: String = "hi".to_string(); // `&str` to `String`: allocates.
-let view: &str = owned.as_str(); // `String` to `&str`: borrowed view.
+fn main() {
+    let owned = String::from("inventory");
+    
+    // A reference to a `String` automatically converts (coerces) to `&str`.
+    print_label(&owned); 
+    
+    // String literals are already of type `&str`.
+    print_label("literal"); 
+}
 ```
 
-**Accept `&str`, store `String`**, and let the coercion handle the rest. When the compiler
-says `expected &str, found String` (or the reverse), it now reads as an ownership
-statement, as an ownership mismatch: one side expects a borrowed view while the other
-provides an owned value, or vice versa. The same owner/view pairing exists for
-collections ( `Vec<T>` owns, `&[T]` (a _slice_) is the borrowed view ) with identical
-rules.
+The same relationship applies to vectors and slices: `Vec<T>` is the owned container, and `&[T]` is the borrowed view.
 
-## 3.10 A playbook for borrow-checker conflicts
+## Resolve borrow-checker conflicts
 
-Borrow conflicts are common while learning Rust. The following steps provide a practical
-order for resolving them.
+When you encounter borrow-checker errors, use the following three-step process to resolve them:
 
-**First, inspect the design.** A persistent borrow conflict often means that two parts of
-the program both behave as though they own the same value. Consider passing ownership in
-and returning it, splitting a struct so borrows do not overlap, or storing items in one
-collection and passing indices rather than long-lived references. These changes resolve
-many borrow-checker conflicts and often clarify the model.
+1. **Examine your program design**: Many borrow conflicts indicate that multiple parts of your code are trying to own or modify the same data. 
+   * Consider passing ownership to functions and returning it.
+   * Split large structs into smaller, independent structs so that borrows do not overlap.
+   * Store data in a single collection and pass indices instead of long-lived references.
+2. **Clone data deliberately**: If copying a value simplifies ownership and does not impact performance, use the `clone` method. Keep these copies visible and measure performance to ensure they do not cause bottlenecks.
+3. **Use smart pointers**: If simpler designs do not work, use Rust's advanced ownership types:
+   * **`Box<T>`**: Allocates a value on the heap with a single owner.
+   * **`Rc<T>` / `Arc<T>`**: Implements shared read-only ownership using reference counting. `Arc<T>` is the thread-safe version of `Rc<T>`.
+   * **`RefCell<T>` / `Mutex<T>`**: Implements interior mutability, which moves borrow checking from compile time to runtime. `RefCell<T>` is for single-threaded code and panics if borrowing rules are violated. `Mutex<T>` is for multi-threaded code.
 
-**Second, clone deliberately.** Duplicating a small value to simplify ownership can be a
-reasonable engineering trade-off. Keep the copy visible, and use measurement to decide
-whether its cost matters.
-
-**Third, use the appropriate ownership tools** when the simpler model is not enough. Each
-of the following types expresses a specific ownership or mutability requirement:
-`Box<T>` (heap-allocate, still one owner), `Rc<T>` / `Arc<T>` (_shared_ ownership via
-reference counting, freed when the last owner drops; `Arc` is the thread-safe one —
-chapter 7), `RefCell<T>` / `Mutex<T>` (_interior mutability_ — THE rule enforced at
-**run time** instead of compile time; `RefCell` panics on violation, `Mutex` makes
-violators wait).
-
-> **Common mistake:** reaching for shared ownership and interior mutability before clarifying
-> the basic ownership model. If `Rc<RefCell<…>>` begins to appear throughout the design,
-> return to the first step and reconsider which component should own the data.
+> **Common mistake**:
+> Avoid using shared ownership and interior mutability types (such as `Rc<RefCell<T>>`) as your default design. Reconsider your architecture first to see if you can achieve a simpler ownership structure.
 
 ## Summary
 
-Ownership has three rules: each value has one owner, the value is dropped when that
-owner leaves scope, and assignment moves ownership unless the type is `Copy`. Borrowing
-adds one central rule: a value may have shared readers or one exclusive writer, but not
-both at the same time. References must also remain shorter-lived than their owners.
-
-`String`/`&str` and `Vec<T>`/`&[T]` are owner-and-view pairs built on the same model.
-When the borrow checker resists a design, answer “who owns this?” first, clone
-deliberately when appropriate, and reach for shared-ownership or interior-mutability
-types only after the simpler options are exhausted.
+This chapter introduced how Rust manages memory safely:
+* **Ownership**: Every value has a single owner. When the owner goes out of scope, Rust cleans up the resource.
+* **Borrowing**: You can have multiple shared references (`&T`) or a single mutable reference (`&mut T`) to a value at any time.
+* **Lifetimes**: The compiler verifies that references never point to dropped data.
+* **String types**: Use `String` for owned text and `&str` for borrowed views.
